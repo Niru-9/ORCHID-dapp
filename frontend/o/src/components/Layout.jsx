@@ -9,7 +9,7 @@ import { Menu, X } from 'lucide-react';
 
 export default function Layout() {
   const { address, fetchBalance } = useWalletStore();
-  const { registerNode, seedLiquidityFromChain, fetchSettlementTime, fetchNodeCount } = useNetworkStats();
+  const { registerNode, seedLiquidityFromChain, fetchSettlementTime } = useNetworkStats();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
@@ -18,14 +18,11 @@ export default function Layout() {
     seedLiquidityFromChain();
     fetchBalance();
     fetchSettlementTime();
-    fetchNodeCount();
     const balanceInterval = setInterval(fetchBalance, 30000);
     const settlementInterval = setInterval(fetchSettlementTime, 10000);
-    const nodeInterval = setInterval(fetchNodeCount, 60000); // refresh node count every minute
     return () => {
       clearInterval(balanceInterval);
       clearInterval(settlementInterval);
-      clearInterval(nodeInterval);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);

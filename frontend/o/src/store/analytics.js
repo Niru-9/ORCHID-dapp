@@ -121,8 +121,7 @@ export const useAnalytics = create(
           const walletRegistry = [...s.walletRegistry, address];
           return { walletRegistry };
         });
-        // Trigger a fresh node count from Horizon
-        get().fetchNodeCount();
+        // Backend is source of truth for node count — no Horizon fetch needed
       },
 
       // ─────────────────────────────────────────────────────────────────────
@@ -261,7 +260,7 @@ export const useAnalytics = create(
 
           set({ lastIndexedAt: new Date().toISOString(), isIndexing: false });
           get().recomputeMetrics();
-          get().fetchNodeCount();
+          // Don't call fetchNodeCount — backend Redis is source of truth
         } catch (err) {
           set({ isIndexing: false, indexError: err.message });
         }
