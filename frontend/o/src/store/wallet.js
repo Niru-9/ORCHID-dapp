@@ -168,10 +168,6 @@ export const useWalletStore = create(
       isConnecting: false,
       error: null,
       transactions: [],
-      escrowHoldings: [],
-      poolLiquidity: '0',
-      poolUtilization: 0,
-      creditScore: 800,
       savedRouteTemplates: [],
 
       // ── Wallet ─────────────────────────────────────────────────────────────

@@ -1,23 +1,23 @@
 import { NavLink } from 'react-router-dom';
 import { useWalletStore } from '../store/wallet';
 import {
-  LayoutDashboard, ShieldCheck, Landmark,
+  ShieldCheck, Landmark,
   Repeat, Zap, BarChart2, Hexagon, X, LogOut,
-  Activity, Globe,
+  Activity, Globe, PlaneTakeoff,
 } from 'lucide-react';
 
 export default function Sidebar({ onClose }) {
   const { address, balance, disconnect } = useWalletStore();
 
   const navItems = [
-    { path: '/dashboard',             label: 'Dashboard',          icon: LayoutDashboard },
-    { path: '/escrow',                label: 'Smart Escrow',        icon: ShieldCheck },
-    { path: '/lending',               label: 'DeFi Lending',        icon: Landmark },
-    { path: '/credit-score',          label: 'Credit Score',        icon: BarChart2 },
-    { path: '/subscriptions',         label: 'Subscriptions',       icon: Repeat },
-    { path: '/payment-hub',           label: 'Payment Hub',         icon: Zap },
-    { path: '/network-transactions',  label: 'Live Transactions',   icon: Activity },
-    { path: '/network-stats',         label: 'Network Stats',       icon: Globe },
+    { path: '/dashboard',             label: 'Cockpit',            icon: PlaneTakeoff },
+    { path: '/payment-hub',           label: 'Payment Hub',        icon: Zap },
+    { path: '/escrow',                label: 'Smart Escrow',       icon: ShieldCheck },
+    { path: '/subscriptions',         label: 'Subscriptions',      icon: Repeat },
+    { path: '/lending',               label: 'DeFi Lending',       icon: Landmark },
+    { path: '/credit-score',          label: 'Credit Score',       icon: BarChart2 },
+    { path: '/network-transactions',  label: 'Live Transactions',  icon: Activity },
+    { path: '/network-stats',         label: 'Network Stats',      icon: Globe },
   ];
 
   const shortAddress = address
