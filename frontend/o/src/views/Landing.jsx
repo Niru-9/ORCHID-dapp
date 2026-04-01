@@ -14,8 +14,6 @@ export default function Landing() {
     settlementTime,
     networkColor,
     fetchSettlementTime,
-    globalSuccessTxs,
-    globalFailedTxs,
   } = useNetworkStats();
 
   const {
@@ -41,16 +39,14 @@ export default function Landing() {
     return () => { clearInterval(t1); clearInterval(t2); };
   }, [fetchSettlementTime, fetchBalances, fetchBackendMetrics]);
 
-  // Accuracy — backend is source of truth, fall back to networkStats
+  // Accuracy — backend only, default 100%
   const totalAttempted = (successCount || 0) + (failCount || 0);
-  const globalTotal   = totalAttempted > 0 ? totalAttempted : (globalSuccessTxs || 0) + (globalFailedTxs || 0);
-  const globalSuccess = totalAttempted > 0 ? successCount   : (globalSuccessTxs || 0);
-  const successRate   = globalTotal > 0
-    ? ((globalSuccess / globalTotal) * 100).toFixed(1)
+  const successRate = totalAttempted > 0
+    ? ((successCount / totalAttempted) * 100).toFixed(1)
     : '100.0';
 
-  // Volume — backend total, fall back to TVL
-  const displayVolume = totalVolume > 0 ? totalVolume : (poolBalance + escrowBalance);
+  // Volume — backend only, no TVL fallback
+  const displayVolume = totalVolume > 0 ? totalVolume : 0;
 
   const formattedVolume = displayVolume > 1_000_000_000
     ? `${(displayVolume / 1_000_000_000).toFixed(2)}B XLM`
@@ -60,7 +56,7 @@ export default function Landing() {
     ? `${(displayVolume / 1_000).toFixed(2)}K XLM`
     : displayVolume > 0
     ? `${displayVolume.toFixed(4)} XLM`
-    : 'Initializing...';
+    : 'Loading...';
 
   return (
     <div style={{ overflowY: 'auto', height: '100vh', paddingBottom: '100px', width: '100%' }}>

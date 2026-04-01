@@ -46,10 +46,15 @@ export default function Dashboard() {
     return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); clearInterval(t4); };
   }, [fetchBalances, fetchSettlementTime, indexFromHorizon, fetchBackendMetrics]);
 
+  // Settlement — analytics store only (Horizon ledgers)
+  const settleSec = ledgerSettlementSec;
+
+  // Accuracy — backend only. Default 100% until txs are recorded.
   const totalAttempted = successCount + failCount;
-  const accuracy = totalAttempted > 0 ? ((successCount / totalAttempted) * 100).toFixed(2) : null;
-  const accuracyColor = accuracy === null ? 'var(--text-muted)' : parseFloat(accuracy) >= 95 ? '#10b981' : parseFloat(accuracy) >= 80 ? '#f59e0b' : '#ef4444';
-  const settleSec = avgSettlementMs !== null ? (avgSettlementMs / 1000).toFixed(1) : ledgerSettlementSec;
+  const accuracy = totalAttempted > 0
+    ? ((successCount / totalAttempted) * 100).toFixed(1)
+    : '100.0';
+  const accuracyColor = parseFloat(accuracy) >= 95 ? '#10b981' : parseFloat(accuracy) >= 80 ? '#f59e0b' : '#ef4444';
   const tvl = poolBalance + escrowBalance;
 
   const handleSend = async (e) => {
@@ -113,12 +118,12 @@ export default function Dashboard() {
         <div className="card" style={{ border: '1px solid rgba(56,189,248,0.3)', background: 'rgba(56,189,248,0.04)' }}>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Total Volume</div>
           <div style={{ fontSize: '1.9rem', fontWeight: 800, fontFamily: 'Orbitron, sans-serif', color: '#38bdf8', marginTop: '0.4rem' }}>
-            {totalVolume > 0 ? `${fmt(totalVolume)} XLM` : tvl > 0 ? `${fmt(tvl)} XLM` : '—'}
+            {totalVolume > 0 ? `${fmt(totalVolume)} XLM` : '—'}
           </div>
           <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
             {totalVolume > 0
               ? `TVL: ${fmt(poolBalance)} pool · ${fmt(escrowBalance)} escrow`
-              : 'Syncing from chain...'}
+              : 'Loading from backend...'}
           </div>
           {auditMode && <div style={{ marginTop: '0.75rem', padding: '0.6rem', background: 'rgba(0,0,0,0.25)', borderRadius: '6px', fontSize: '0.7rem', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.7 }}>
             Source: all confirmed txs (all modules)<br/>Dedup: txHash Set<br/>Pool TVL: {poolBalance.toFixed(7)} XLM<br/>Escrow TVL: {escrowBalance.toFixed(7)} XLM<br/>Confirmed tx vol: {totalVolume.toFixed(7)} XLM
@@ -153,10 +158,10 @@ export default function Dashboard() {
         <div className="card">
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Network Accuracy</div>
           <div style={{ fontSize: '1.9rem', fontWeight: 800, fontFamily: 'Orbitron, sans-serif', marginTop: '0.4rem', color: accuracyColor }}>
-            {accuracy !== null ? `${accuracy}%` : '—'}
+            {accuracy}%
           </div>
           <div style={{ fontSize: '0.78rem', color: accuracyColor, marginTop: '0.4rem', fontWeight: 500 }}>
-            {accuracy === null ? 'No transactions yet' : parseFloat(accuracy) >= 95 ? 'Network stable' : parseFloat(accuracy) >= 80 ? 'Minor issues' : 'Degraded'}
+            {parseFloat(accuracy) >= 95 ? 'Network stable' : parseFloat(accuracy) >= 80 ? 'Minor issues' : 'Degraded'}
           </div>
           {auditMode && <div style={{ marginTop: '0.75rem', padding: '0.6rem', background: 'rgba(0,0,0,0.25)', borderRadius: '6px', fontSize: '0.7rem', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.7 }}>
             Formula: success/(success+failed)×100<br/>Successful: {successCount}<br/>Failed: {failCount}<br/>Total: {totalAttempted}<br/>Source: backend DB tx table

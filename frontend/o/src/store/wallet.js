@@ -47,10 +47,13 @@ const wcModules = WC_PROJECT_ID
     })]
   : [];
 
-StellarWalletsKit.init({
-  network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
-  modules: [...defaultModules(), ...wcModules],
-});
+// Guard against double-init (React StrictMode renders twice in dev)
+if (!StellarWalletsKit.isInitialized?.()) {
+  StellarWalletsKit.init({
+    network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
+    modules: [...defaultModules(), ...wcModules],
+  });
+}
 
 // ─── Helper: extract a human-readable message from a Horizon error ───────────
 function horizonError(err) {
@@ -86,9 +89,10 @@ async function signAndSubmit(tx, signerAddress) {
 
   if (!signedXdr) throw new Error('Signing failed or was cancelled');
 
-  // Submit the signed XDR directly — do NOT rebuild via fromXDR as that strips signatures
+  // Rebuild Transaction object from signed XDR and submit
   try {
-    return await server.submitTransaction(signedXdr);
+    const signedTx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE);
+    return await server.submitTransaction(signedTx);
   } catch (err) {
     throw new Error(horizonError(err));
   }
@@ -102,10 +106,9 @@ async function signSubmitRecord(tx, { amount, sourceAccount, type }) {
   let res;
   try {
     res = await signAndSubmit(tx, sourceAccount);
-    // Record in local analytics event log
+    if (!res || !res.hash) throw new Error('No response from Horizon');
     analytics.recordLocalTx({ txHash: res.hash, amount, sourceAccount, type });
     analytics.confirmTx(res.hash, true);
-    // Record in backend DB (persistent, cross-user source of truth)
     try {
       const { api } = await import('./api.js');
       await api.recordTx({ tx_hash: res.hash, amount, source_account: sourceAccount, type, success: true });
@@ -137,17 +140,22 @@ function stellarAmount(value) {
 
 // ─── Helper: build tx with auto-retry on tx_bad_seq ──────────────────────────
 async function buildAndSign(address, buildFn, meta = {}) {
+  let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
     const account = await server.loadAccount(address);
     const fee = await server.fetchBaseFee();
     const tx = buildFn(account, fee);
     try {
-      return await signSubmitRecord(tx, { sourceAccount: address, ...meta });
+      const res = await signSubmitRecord(tx, { sourceAccount: address, ...meta });
+      if (!res) throw new Error('Transaction submission returned no response');
+      return res;
     } catch (err) {
+      lastErr = err;
       if (attempt === 0 && err.message?.includes('tx_bad_seq')) continue;
       throw err;
     }
   }
+  throw lastErr || new Error('Transaction failed after retries');
 }
 
 export const useWalletStore = create(
@@ -226,7 +234,14 @@ export const useWalletStore = create(
       // ── Sanitize persisted transactions (removes malformed entries from old versions) ──
       sanitizeTransactions: () => {
         set((s) => ({
-          transactions: s.transactions.filter(t => t && typeof t === 'object' && t.id && t.type),
+          transactions: (s.transactions || []).filter(
+            t => t !== null && t !== undefined && typeof t === 'object'
+          ).map(t => ({
+            ...t,
+            type: t.type || 'Transfer',   // ensure type always exists
+            status: t.status || 'Completed',
+            time: t.time || new Date().toISOString(),
+          })),
         }));
       },
 

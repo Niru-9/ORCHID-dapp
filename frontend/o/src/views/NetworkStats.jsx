@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAnalytics } from '../store/analytics';
-import { useNetworkStats } from '../store/networkStats';
 import { useLendingStore } from '../store/lending';
 import { useWalletStore } from '../store/wallet';
 import { Users, TrendingUp, ShieldCheck, Landmark, Coins, Activity } from 'lucide-react';
@@ -29,7 +28,6 @@ function fmt(n) {
 
 export default function NetworkStats() {
   const { totalVolume, nodeCount, successCount, failCount, poolBalance, escrowBalance, ledgerSettlementSec, networkStatus, networkColor, fetchBalances, fetchSettlementTime, fetchBackendMetrics } = useAnalytics();
-  const { settlementTime } = useNetworkStats();
   const { loans, deposits, fixedDeposits } = useLendingStore();
   const { transactions } = useWalletStore();
 
@@ -49,7 +47,7 @@ export default function NetworkStats() {
   const escrowTxs = transactions.filter(t => t.type === 'Create Escrow');
   const activeEscrows = escrowTxs.filter(t => t.status === 'Funded' || t.status === 'Delivered').length;
   const totalEscrowValue = escrowTxs.filter(t => t.status === 'Funded' || t.status === 'Delivered').reduce((acc, t) => acc + parseFloat(t.amount?.split(' ')[0] || 0), 0);
-  const settleTime = ledgerSettlementSec || settlementTime;
+  const settleTime = ledgerSettlementSec; // analytics only — no networkStats fallback
   const tvl = poolBalance + escrowBalance;
 
   return (
@@ -72,7 +70,7 @@ export default function NetworkStats() {
       {/* Section: Volume */}
       <div style={{ marginBottom: '0.75rem', fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700 }}>Volume</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
-        <StatCard icon={Coins} label="Total Network Volume" value={totalVolume > 0 ? `${fmt(totalVolume)} XLM` : tvl > 0 ? `${fmt(tvl)} XLM` : '—'} sub="All confirmed transactions" color="#38bdf8" />
+        <StatCard icon={Coins} label="Total Network Volume" value={totalVolume > 0 ? `${fmt(totalVolume)} XLM` : '—'} sub="All confirmed transactions" color="#38bdf8" />
         <StatCard icon={Landmark} label="Pool Liquidity (TVL)" value={`${fmt(poolBalance)} XLM`} sub="Live balance of liquidity pool" color="#22c55e" />
         <StatCard icon={ShieldCheck} label="Escrow Locked" value={`${fmt(escrowBalance)} XLM`} sub="Live balance of escrow account" color="#f59e0b" />
       </div>
