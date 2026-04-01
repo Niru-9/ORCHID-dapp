@@ -7,25 +7,10 @@ const { processPendingDisbursements } = require('./disburse');
 
 const app = express();
 
-// ── CORS ──────────────────────────────────────────────────────────────────────
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'https://orchid-dapp.vercel.app',   // hardcoded production URL
-  process.env.FRONTEND_URL,
-].filter(Boolean);
-
+// ── CORS — allow all origins ──────────────────────────────────────────────────
 app.use(cors({
-  origin: (origin, cb) => {
-    // Allow requests with no origin (mobile apps, Postman, server-to-server)
-    if (!origin) return cb(null, true);
-    // Allow exact matches
-    if (allowedOrigins.includes(origin)) return cb(null, true);
-    // Allow any vercel.app preview deployments
-    if (origin.endsWith('.vercel.app')) return cb(null, true);
-    cb(new Error('CORS not allowed'));
-  },
-  credentials: true,
+  origin: '*',
+  credentials: false,
 }));
 
 app.use(express.json());
