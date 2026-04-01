@@ -1,0 +1,50 @@
+{
+"framework": "vite",
+"buildCommand": "cd frontend/o && npm install && npm run build",
+"outputDirectory": "frontend/o/dist",
+"rewrites": [
+{
+"source": "/(.*)",
+"destination": "/index.html"
+}
+],
+"headers": [
+{
+"source": "/:path*",
+"headers": [
+{
+"key": "Content-Security-Policy",
+"value": "default-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' https: data: blob:; font-src 'self' data: https:; connect-src 'self' https: wss: http: localhost:*;"
+},
+{
+"key": "Access-Control-Allow-Origin",
+"value": "*"
+},
+{
+"key": "Access-Control-Allow-Methods",
+"value": "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+},
+{
+"key": "Access-Control-Allow-Headers",
+"value": "Content-Type, Authorization, X-Requested-With, Accept"
+},
+{
+"key": "X-Content-Type-Options",
+"value": "nosniff"
+},
+{
+"key": "X-Frame-Options",
+"value": "SAMEORIGIN"
+},
+{
+"key": "X-XSS-Protection",
+"value": "1; mode=block"
+},
+{
+"key": "Referrer-Policy",
+"value": "no-referrer-when-downgrade"
+}
+]
+}
+]
+}
