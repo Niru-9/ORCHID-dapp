@@ -388,6 +388,7 @@ export const useWalletStore = create(
         const record = {
           id: shortId(), hash: res.hash, type: 'Create Escrow',
           amount: `${amount} ${asset}`, merchant: seller, description,
+          buyer: address, // store buyer address for refunds
           status: 'Funded', expiresAt, time: new Date().toISOString(),
         };
 
@@ -420,10 +421,11 @@ export const useWalletStore = create(
         const escrow = transactions.find(t => t.id === id);
         if (!escrow) throw new Error('Escrow not found');
 
-        // Backend signs and sends from escrow account → buyer (current user)
+        // Refund goes to the original buyer who locked the funds
+        const refundTo = escrow.buyer || address;
         const { api } = await import('./api.js');
         const amountNum = parseFloat(escrow.amount.split(' ')[0]);
-        await api.disburseEscrowRefund(address, amountNum, id);
+        await api.disburseEscrowRefund(refundTo, amountNum, id);
 
         set((s) => ({
           transactions: s.transactions.map((t) =>

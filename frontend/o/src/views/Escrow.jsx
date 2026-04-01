@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useWalletStore } from '../store/wallet';
 
 export default function Escrow() {
-  const { createEscrow, releaseEscrow, refundEscrow, markDelivered, disputeEscrow, checkEscrowExpiry, transactions, escrowHoldings } = useWalletStore();
+  const { createEscrow, releaseEscrow, refundEscrow, disputeEscrow, checkEscrowExpiry, transactions, address } = useWalletStore();
   
   const [seller, setSeller] = useState('');
   const [amount, setAmount] = useState('');
@@ -11,11 +11,11 @@ export default function Escrow() {
   const [description, setDescription] = useState('');
   const [expiryDays, setExpiryDays] = useState('7');
   const [isCreating, setIsCreating] = useState(false);
+  const [processingId, setProcessingId] = useState(null);
 
-  // Check for expired escrows on mount and periodically
   useEffect(() => {
     checkEscrowExpiry();
-    const interval = setInterval(checkEscrowExpiry, 60000); // every minute
+    const interval = setInterval(checkEscrowExpiry, 60000);
     return () => clearInterval(interval);
   }, [checkEscrowExpiry]);
 
@@ -25,7 +25,7 @@ export default function Escrow() {
     setIsCreating(true);
     try {
       const hash = await createEscrow(seller, amount, asset, description, expiryDays);
-      alert(`Escrow created successfully! Hash: ${hash}`);
+      alert(`Escrow created! Funds locked in custody.\nHash: ${hash}`);
       setSeller(''); setAmount(''); setDescription('');
     } catch (err) {
       alert(err.message);
@@ -34,49 +34,52 @@ export default function Escrow() {
     }
   };
 
-  const handleRelease = async (id) => {
+  // Mark Delivered = confirm delivery AND release funds to seller immediately
+  const handleMarkDelivered = async (id) => {
     const tx = transactions.find(t => t.id === id);
     if (!tx) return;
 
-    // AUTHORIZATION GATE: Explicit confirmation required from the initiator before any funds move
     const confirmed = window.confirm(
-      `⚠️ RELEASE AUTHORIZATION\n\n` +
-      `You are about to release funds from escrow:\n\n` +
+      `✅ CONFIRM DELIVERY & RELEASE PAYMENT\n\n` +
+      `Marking as delivered will immediately release:\n\n` +
       `  Amount : ${tx.amount}\n` +
       `  To     : ${tx.merchant}\n\n` +
-      `This action is IRREVERSIBLE and will initiate an on-chain transfer.\n\n` +
-      `Are you sure you want to release these funds?`
+      `This is IRREVERSIBLE. Funds will be sent to the seller now.\n\nConfirm?`
     );
     if (!confirmed) return;
 
+    setProcessingId(id);
     try {
       const hash = await releaseEscrow(id);
-      alert(`Funds Released Successfully!\nHash: ${hash}`);
-    } catch(err) {
+      alert(`✅ Delivery confirmed & payment released!\nFunds sent to seller.\nHash: ${hash}`);
+    } catch (err) {
       alert(err.message);
+    } finally {
+      setProcessingId(null);
     }
   };
 
+  // Force Refund = send funds back to the buyer (current user who created the escrow)
   const handleRefund = async (id) => {
     const tx = transactions.find(t => t.id === id);
     if (!tx) return;
 
-    // AUTHORIZATION GATE: Explicit confirmation required before initiating refund
     const confirmed = window.confirm(
       `⚠️ REFUND AUTHORIZATION\n\n` +
-      `You are about to refund the following escrow:\n\n` +
-      `  Amount : ${tx.amount}\n` +
-      `  From   : ${tx.merchant}\n\n` +
-      `Funds will be returned to your wallet. This action is IRREVERSIBLE.\n\n` +
-      `Proceed with refund?`
+      `Funds will be returned to your wallet:\n\n` +
+      `  Amount : ${tx.amount}\n\n` +
+      `This action is IRREVERSIBLE.\n\nProceed?`
     );
     if (!confirmed) return;
 
+    setProcessingId(id);
     try {
       const hash = await refundEscrow(id);
-      alert(`Funds Refunded!\nHash: ${hash}`);
-    } catch(err) {
+      alert(`Funds refunded to your wallet!\nHash: ${hash}`);
+    } catch (err) {
       alert(err.message);
+    } finally {
+      setProcessingId(null);
     }
   };
 
@@ -206,21 +209,39 @@ export default function Escrow() {
                           <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                             {tx.status === 'Funded' && (
                               <>
-                                <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem' }} onClick={() => markDelivered(tx.id)}>Mark Delivered</button>
+                                <button
+                                  className="action-btn"
+                                  style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: '#10b981' }}
+                                  onClick={() => handleMarkDelivered(tx.id)}
+                                  disabled={processingId === tx.id}
+                                >
+                                  {processingId === tx.id ? 'Processing...' : 'Mark Delivered'}
+                                </button>
                                 <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }} onClick={() => disputeEscrow(tx.id)}>Dispute</button>
                               </>
                             )}
                             {tx.status === 'Delivered' && (
-                              <>
-                                <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: '#10b981' }} onClick={() => handleRelease(tx.id)}>Release</button>
-                                <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }} onClick={() => disputeEscrow(tx.id)}>Dispute</button>
-                              </>
+                              <span style={{ fontSize: '0.7rem', color: '#10b981' }}>Payment sent ✓</span>
                             )}
                             {tx.status === 'Disputed' && (
-                              <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem' }} onClick={() => handleRefund(tx.id)}>Force Refund</button>
+                              <button
+                                className="action-btn"
+                                style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }}
+                                onClick={() => handleRefund(tx.id)}
+                                disabled={processingId === tx.id}
+                              >
+                                {processingId === tx.id ? 'Processing...' : 'Force Refund'}
+                              </button>
                             )}
                             {tx.status === 'Expired' && (
-                              <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(249,115,22,0.3)', color: '#f97316' }} onClick={() => handleRefund(tx.id)}>Force Refund</button>
+                              <button
+                                className="action-btn"
+                                style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(249,115,22,0.3)', color: '#f97316' }}
+                                onClick={() => handleRefund(tx.id)}
+                                disabled={processingId === tx.id}
+                              >
+                                {processingId === tx.id ? 'Processing...' : 'Claim Refund'}
+                              </button>
                             )}
                             {(tx.status === 'Released' || tx.status === 'Refunded' || tx.status?.includes('Refunded')) && (
                               <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Settled</span>
