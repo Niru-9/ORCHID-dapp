@@ -49,6 +49,10 @@ export const api = {
   disburseFdMaturity: (recipient, amount, fd_id) =>
     post('/api/disburse/fd-maturity', { recipient, amount, fd_id }),
 
+  /** Pay out accrued supply interest from pool → supplier */
+  disburseSupplyInterest: (recipient, amount, supply_id) =>
+    post('/api/disburse/supply-interest', { recipient, amount, supply_id }),
+
   /** Release escrow funds from escrow account → seller */
   disburseEscrowRelease: (seller, amount, escrow_id) =>
     post('/api/disburse/escrow-release', { seller, amount, escrow_id }),

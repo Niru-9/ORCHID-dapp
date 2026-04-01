@@ -17,23 +17,36 @@ import { persist } from 'zustand/middleware';
 
 const MS_PER_DAY = 86_400_000;
 
-// ── APY tables ────────────────────────────────────────────────────────────────
+// ── Borrow rates by term + payment type ──────────────────────────────────────
+// One-Time Payment = base rate (lower, lump sum preferred)
+// EMI = base rate + 3% premium (installment risk)
 export const BORROW_BASE_APY = {
-  30:  12.0,
-  90:  14.0,
-  180: 16.0,
+  30:  { 'One-Time Payment': 12.0, 'EMI': 15.0 },
+  90:  { 'One-Time Payment': 14.0, 'EMI': 17.0 },
+  180: { 'One-Time Payment': 16.0, 'EMI': 19.0 },
 };
 
+// ── Fixed Deposit rates — longer lock = higher reward ────────────────────────
 export const FD_APY = {
-  30:   4.0,
-  90:   4.3,
-  180:  4.6,
-  365:  5.7,
-  1095: 6.3,
-  1825: 7.1,
+  30:    5.0,
+  90:    6.5,
+  180:   8.0,
+  365:  10.0,
+  1095: 12.5,
+  1825: 15.0,
 };
 
-export const SUPPLY_APY = 9.6;
+// ── Dynamic supply APY ────────────────────────────────────────────────────────
+// supply_apy = avg_borrow_rate × utilization × 0.8
+// (suppliers earn 80% of what borrowers pay; protocol keeps 20%)
+export function calcSupplyApy(poolUtilization, avgBorrowRate = 14.0) {
+  const util = Math.min(100, Math.max(0, poolUtilization)) / 100;
+  const raw = avgBorrowRate * util * 0.8;
+  return Math.max(3.0, +raw.toFixed(1)); // floor at 3% to always reward suppliers
+}
+
+// ── Credit score thresholds ───────────────────────────────────────────────────
+export const CREDIT_GATE = 400; // below this = no new loans
 
 // ── Penalty: +1.5% per 2 days overdue (simple, additive) ─────────────────────
 export function calcPenaltyRate(basePct, daysLate) {
@@ -81,13 +94,15 @@ export const useLendingStore = create(
       // Called AFTER the on-chain tx is confirmed. Records the deposit.
       // ─────────────────────────────────────────────────────────────────────
       recordSupply: (hash, amount, asset) => {
+        const { poolUtilization } = get();
+        const dynamicApy = calcSupplyApy(poolUtilization);
         const record = {
           id: `SUP-${Date.now()}`,
           hash,
           type: 'Supply',
           amount: parseFloat(amount),
           asset,
-          apy: SUPPLY_APY,
+          apy: dynamicApy,
           status: 'Active',
           time: new Date().toISOString(),
         };
@@ -145,10 +160,15 @@ export const useLendingStore = create(
       // ─────────────────────────────────────────────────────────────────────
       recordBorrow: (hash, amount, asset, termDays, paymentType) => {
         const { creditScore } = get();
-        // Credit-gated rate: poor credit → max rate
-        const baseApy = creditScore < 500
-          ? 22.0
-          : BORROW_BASE_APY[termDays] ?? 14.0;
+
+        // Credit-gated: below CREDIT_GATE = max penalty rate
+        let baseApy;
+        if (creditScore < CREDIT_GATE) {
+          baseApy = 22.0;
+        } else {
+          const rateTable = BORROW_BASE_APY[termDays] ?? BORROW_BASE_APY[90];
+          baseApy = rateTable[paymentType] ?? rateTable['One-Time Payment'];
+        }
 
         const dueDate = new Date(Date.now() + termDays * MS_PER_DAY).toISOString();
         const repayAmount = calcRepayAmount(parseFloat(amount), baseApy, termDays, 0);
@@ -171,7 +191,7 @@ export const useLendingStore = create(
 
         set((s) => ({
           loans: [loan, ...s.loans],
-          creditScore: clamp(s.creditScore - 5, 300, 800), // small hit for taking debt
+          creditScore: clamp(s.creditScore - 5, 300, 800),
         }));
 
         return loan;
@@ -279,11 +299,12 @@ export const useLendingStore = create(
           .filter((l) => l.status === 'Active' || l.status === 'Partial')
           .reduce((acc, l) => acc + (l.amount - l.amountRepaid), 0);
 
-        if (creditScore < 300) throw new Error('Credit score too low to borrow');
+        if (creditScore < CREDIT_GATE)
+          throw new Error(`Credit score too low (${creditScore}). Minimum required: ${CREDIT_GATE}. Repay existing loans to improve your score.`);
         if (parseFloat(amount) <= 0) throw new Error('Invalid amount');
         if (parseFloat(amount) > poolBalance * 0.8)
           throw new Error(`Max borrow is 80% of pool liquidity (${(poolBalance * 0.8).toFixed(2)} XLM)`);
-        if (activeDebt > 0 && loans.filter(l => l.status === 'Active').length >= 3)
+        if (loans.filter(l => l.status === 'Active').length >= 3)
           throw new Error('Maximum 3 concurrent active loans');
       },
     }),

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useWalletStore } from '../store/wallet';
-import { useLendingStore, FD_APY, BORROW_BASE_APY, SUPPLY_APY, calcRepayAmount, calcFdPayout } from '../store/lending';
+import { useLendingStore, FD_APY, BORROW_BASE_APY, calcSupplyApy, CREDIT_GATE, calcRepayAmount, calcFdPayout } from '../store/lending';
 
 const MS_PER_DAY = 86_400_000;
 const TERM_LABELS = { 30:'30 Days', 90:'90 Days', 180:'6 Months', 365:'1 Year', 1095:'3 Years', 1825:'5 Years' };
@@ -45,7 +45,13 @@ export default function Lending() {
     return () => clearInterval(t);
   }, [fetchPoolBalance, tickPenalties]);
 
-  const baseBorrowApy = creditScore < 500 ? 22.0 : BORROW_BASE_APY[borrowTerm] ?? 14.0;
+  // Dynamic supply APY based on pool utilization
+  const supplyApy = calcSupplyApy(poolUtilization);
+
+  // Borrow rate depends on term AND payment type
+  const baseBorrowApy = creditScore < CREDIT_GATE
+    ? 22.0
+    : (BORROW_BASE_APY[borrowTerm]?.[paymentType] ?? BORROW_BASE_APY[90]?.['One-Time Payment'] ?? 14.0);
   const borrowRateColor = baseBorrowApy >= 20 ? '#ef4444' : baseBorrowApy >= 16 ? '#eab308' : '#22c55e';
   const borrowPreview = borrowAmt ? calcRepayAmount(parseFloat(borrowAmt) || 0, baseBorrowApy, borrowTerm, 0) : null;
   const fdApy = FD_APY[fdTerm] ?? 5.7;
@@ -103,7 +109,7 @@ export default function Lending() {
         {[
           { label: 'Pool Liquidity', value: poolBalance > 0 ? `${poolBalance.toLocaleString(undefined,{maximumFractionDigits:2})} XLM` : 'Loading...', color: '#eab308' },
           { label: 'Pool Utilization', value: `${poolUtilization}%`, color: poolUtilization >= 80 ? '#ef4444' : poolUtilization >= 50 ? '#eab308' : '#10b981' },
-          { label: 'Supply APY', value: `${SUPPLY_APY}%`, color: '#38bdf8' },
+          { label: 'Supply APY', value: `${supplyApy}%`, color: '#38bdf8' },
           { label: 'Credit Score', value: creditScore, color: scoreColor },
         ].map((s, i) => (
           <div key={i} className="card" style={{ padding: '1rem' }}>
@@ -119,6 +125,12 @@ export default function Lending() {
         </div>
       )}
 
+      {creditScore < CREDIT_GATE && (
+        <div style={{ padding: '0.75rem 1rem', marginBottom: '1.5rem', borderRadius: '8px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', fontSize: '0.85rem', color: '#ef4444' }}>
+          🚫 Credit score too low ({creditScore}/{CREDIT_GATE} minimum). Repay existing loans to restore borrowing access.
+        </div>
+      )}
+
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', borderBottom: '1px solid var(--glass-border)' }}>
         {[['supply','Provide Liquidity'],['borrow','Borrow'],['fixed-deposit','Fixed Deposit']].map(([id, label]) => (
@@ -131,10 +143,10 @@ export default function Lending() {
         <div className="grid-2">
           <div className="card">
             <h3 className="card-title">Supply to Pool</h3>
-            <p style={{ fontSize: '0.875rem', marginBottom: '1.5rem', color: 'var(--text-muted)' }}>Funds go directly to the protocol liquidity pool. Earn {SUPPLY_APY}% APY.</p>
+            <p style={{ fontSize: '0.875rem', marginBottom: '1.5rem', color: 'var(--text-muted)' }}>Funds go directly to the protocol liquidity pool. Earn {supplyApy}% APY.</p>
             <div style={{ padding: '1rem', background: 'rgba(56,189,248,0.05)', borderRadius: '12px', border: '1px solid rgba(56,189,248,0.1)', marginBottom: '1.5rem' }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Current Yield (APY)</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#38bdf8' }}>{SUPPLY_APY}%</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#38bdf8' }}>{supplyApy}%</div>
             </div>
             <form onSubmit={handleSupply} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               <div className="form-group">

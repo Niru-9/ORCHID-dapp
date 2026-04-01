@@ -84,6 +84,7 @@ async function processPendingDisbursements() {
       const memoText = {
         borrow:          'Orchid Loan',
         fd_maturity:     'Orchid FD Payout',
+        supply_interest: 'Orchid Supply Interest',
         escrow_release:  'Orchid Escrow Release',
         escrow_refund:   'Orchid Escrow Refund',
       }[disb.type] || 'Orchid Payout';

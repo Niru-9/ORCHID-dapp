@@ -87,6 +87,28 @@ app.post('/api/disburse/borrow', async (req, res) => {
 });
 
 /**
+ * POST /api/disburse/supply-interest
+ * Called when user claims accrued supply interest.
+ * Backend sends interest earned from pool → supplier.
+ */
+app.post('/api/disburse/supply-interest', async (req, res) => {
+  const { recipient, amount, supply_id } = req.body;
+  if (!recipient || !amount) return res.status(400).json({ error: 'recipient and amount required' });
+  try {
+    await db.queueDisbursement({
+      type: 'supply_interest',
+      recipient,
+      amount: parseFloat(amount),
+      fromAccount: 'pool',
+      releaseAt: new Date().toISOString(),
+      meta: { supply_id },
+    });
+    await processPendingDisbursements();
+    res.json({ success: true, message: `Supply interest of ${amount} XLM sent to ${recipient}` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
  * POST /api/disburse/fd-maturity
  * Called by frontend when user clicks "Claim" on a matured FD.
  * Backend sends principal + interest from pool → user.
@@ -164,7 +186,10 @@ app.use((req, res) => res.status(404).json({ error: 'Not found', path: req.path 
 
 // ── Scheduler — check pending disbursements every 60s ────────────────────────
 setInterval(async () => {
-  try { await processPendingDisbursements(); }
+  try {
+    await processPendingDisbursements();
+    console.log('[Scheduler] Disbursement check complete');
+  }
   catch (e) { console.error('[Scheduler] Error:', e.message); }
 }, 60_000);
 
