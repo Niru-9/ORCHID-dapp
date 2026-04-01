@@ -316,17 +316,16 @@ export const useWalletStore = create(
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
 
-        let total = 0;
+        // Compute total BEFORE buildAndSign so meta gets the correct amount
+        const total = recipients.reduce((acc, r) => acc + parseFloat(stellarAmount(r.amount)), 0);
+
         const res = await buildAndSign(address, (account, fee) => {
           const builder = new TransactionBuilder(account, {
             fee: (parseInt(fee) * recipients.length).toString(),
             networkPassphrase: NETWORK_PASSPHRASE,
           });
-          total = 0;
           for (const r of recipients) {
-            const amt = stellarAmount(r.amount);
-            total += parseFloat(amt);
-            builder.addOperation(Operation.payment({ destination: r.address, asset: Asset.native(), amount: amt }));
+            builder.addOperation(Operation.payment({ destination: r.address, asset: Asset.native(), amount: stellarAmount(r.amount) }));
           }
           return builder.setTimeout(60).build();
         }, { amount: total, type: 'Bulk Payout' });
@@ -335,7 +334,7 @@ export const useWalletStore = create(
           id: shortId(),
           hash: res.hash,
           type: 'Bulk Payout',
-          amount: `${total.toFixed(7)} XLM`,
+          amount: `${total.toFixed(2)} XLM`,
           recipients: `${recipients.length} recipients`,
           status: 'Completed',
           time: new Date().toISOString(),

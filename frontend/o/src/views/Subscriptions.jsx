@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useWalletStore } from '../store/wallet';
 
@@ -8,8 +8,39 @@ export default function Subscriptions() {
   const [merchant, setMerchant] = useState('');
   const [amount, setAmount] = useState('');
   const [interval, setIntervalVal] = useState('2592000');
+  const processingRef = useRef(new Set()); // track which subs are being auto-processed
 
-  const subTxs = transactions.filter(t => t.type === 'Subscribe');
+  const subTxs = transactions.filter(t => t && t.type === 'Subscribe');
+
+  // ── Auto-process due subscriptions ──────────────────────────────────────────
+  useEffect(() => {
+    const checkAndProcess = async () => {
+      const now = new Date();
+      const activeSubs = subTxs.filter(t => t.status === 'Active');
+
+      for (const sub of activeSubs) {
+        if (!sub.nextDueDate) continue;
+        if (new Date(sub.nextDueDate) > now) continue;
+        if (processingRef.current.has(sub.id)) continue; // already processing
+
+        processingRef.current.add(sub.id);
+        try {
+          await processPayment(sub.id);
+          console.log(`[Orchid] Auto-processed subscription ${sub.id}`);
+        } catch (err) {
+          console.warn(`[Orchid] Auto-process failed for ${sub.id}:`, err.message);
+        } finally {
+          processingRef.current.delete(sub.id);
+        }
+      }
+    };
+
+    // Check immediately on mount, then every 60 seconds
+    checkAndProcess();
+    const t = setInterval(checkAndProcess, 60_000);
+    return () => clearInterval(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transactions]);
 
   const handleSubscribe = async (e) => {
     e.preventDefault();
@@ -63,7 +94,7 @@ export default function Subscriptions() {
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
       <div className="view-header">
         <h2 className="view-title">Subscription & Recurring Payments</h2>
-        <p className="view-subtitle">Automate billing cycles with on-chain recurring payment streams.</p>
+        <p className="view-subtitle">Automate billing cycles with on-chain recurring payment streams. Payments process automatically when due.</p>
       </div>
 
       {/* Stats */}

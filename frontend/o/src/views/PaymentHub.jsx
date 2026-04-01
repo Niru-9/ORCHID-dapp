@@ -303,7 +303,7 @@ function BulkPayoutsTab() {
                     <td className="mono" style={{ fontSize: '0.75rem', color: 'var(--accent-glow)' }}>
                       {tx.hash ? <a href={`https://stellar.expert/explorer/testnet/tx/${tx.hash}`} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>{tx.recipients}</a> : tx.recipients}
                     </td>
-                    <td style={{ color: '#ef4444', fontWeight: 600 }}>-{tx.amount}</td>
+                    <td style={{ fontWeight: 600, color: 'var(--text-main)' }}>{tx.amount}</td>
                     <td>{new Date(tx.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
                     <td><span className={`badge ${tx.status === 'Completed' ? 'success' : 'error'}`}>{tx.status}</span></td>
                   </tr>
