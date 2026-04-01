@@ -11,12 +11,18 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
+  'https://orchid-dapp.vercel.app',   // hardcoded production URL
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    // Allow requests with no origin (mobile apps, Postman, server-to-server)
+    if (!origin) return cb(null, true);
+    // Allow exact matches
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    // Allow any vercel.app preview deployments
+    if (origin.endsWith('.vercel.app')) return cb(null, true);
     cb(new Error('CORS not allowed'));
   },
   credentials: true,

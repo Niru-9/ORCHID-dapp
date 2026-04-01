@@ -174,6 +174,7 @@ export const useWalletStore = create(
           if (!result?.address) throw new Error('Wallet connection cancelled');
           set({ address: result.address, isConnecting: false });
           await get().fetchBalance();
+          get().sanitizeTransactions(); // clean any malformed persisted data
           // Register wallet in analytics + network stats
           const [{ useAnalytics }, { useNetworkStats }] = await Promise.all([
             import('./analytics.js'),
@@ -221,6 +222,13 @@ export const useWalletStore = create(
       },
 
       clearTransactions: () => set({ transactions: [] }),
+
+      // ── Sanitize persisted transactions (removes malformed entries from old versions) ──
+      sanitizeTransactions: () => {
+        set((s) => ({
+          transactions: s.transactions.filter(t => t && typeof t === 'object' && t.id && t.type),
+        }));
+      },
 
       // ── Send (Dashboard quick transfer) ────────────────────────────────────
       sendTransaction: async (destination, amount) => {
@@ -431,7 +439,7 @@ export const useWalletStore = create(
         const now = new Date().toISOString();
         set((s) => ({
           transactions: s.transactions.map((t) =>
-            t.type === 'Create Escrow' && t.status === 'Funded' && t.expiresAt && t.expiresAt < now
+            t && t.type === 'Create Escrow' && t.status === 'Funded' && t.expiresAt && t.expiresAt < now
               ? { ...t, status: 'Expired' }
               : t
           ),
