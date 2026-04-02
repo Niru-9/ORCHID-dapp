@@ -1,6 +1,6 @@
-<img width="475" height="842" alt="image" src="https://github.com/user-attachments/assets/b3a79f13-ed43-40b1-a2e4-0dd33f307244" /><img width="475" height="836" alt="image" src="https://github.com/user-attachments/assets/2e0c08da-fa1a-40f1-a8fb-bb115f65cfcd" /># ORCHID — Optimized Real-time Cross-border Hub for Intelligent Disbursements
+🌸 ORCHID — Optimized Real-time Cross-border Hub for Intelligent Disbursements
 
-> **A high-performance Web3 financial orchestration platform built on the Stellar Network — enabling real-time, trustless, and scalable cross-border financial operations through an intuitive and visually immersive interface.**
+**A high-performance Web3 financial orchestration platform built on the Stellar Network — enabling real-time, trustless, and scalable cross-border financial operations through an intuitive and visually immersive interface.**
 
 ---
 
