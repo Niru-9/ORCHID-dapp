@@ -7,7 +7,6 @@ import Landing from './views/Landing';
 import Dashboard from './views/Dashboard';
 import Escrow from './views/Escrow';
 import Lending from './views/Lending';
-import Subscriptions from './views/Subscriptions';
 import PaymentHub from './views/PaymentHub';
 import CreditScore from './views/CreditScore';
 import NetworkTransactions from './views/NetworkTransactions';
@@ -35,7 +34,6 @@ export default function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/escrow" element={<Escrow />} />
           <Route path="/lending" element={<Lending />} />
-          <Route path="/subscriptions" element={<Subscriptions />} />
 
           {/* Unified Payment Hub (replaces separate routes) */}
           <Route path="/payment-hub" element={<PaymentHub />} />
