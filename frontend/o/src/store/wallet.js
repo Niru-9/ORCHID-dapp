@@ -523,6 +523,43 @@ export const useWalletStore = create(
         return result.hash;
       },
 
+      withdrawSupply: async (amount) => {
+        const { address } = get();
+        if (!address) throw new Error('Wallet not connected');
+        if (!import.meta.env.VITE_POOL_CONTRACT_ID)
+          throw new Error('Pool contract not configured (VITE_POOL_CONTRACT_ID)');
+
+        const { poolWithdraw } = await import('./pool_contract.js');
+        const result = await poolWithdraw(address, amount);
+
+        const { useLendingStore } = await import('./lending.js');
+        useLendingStore.getState().fetchPoolBalance();
+
+        try {
+          const { api } = await import('./api.js');
+          await api.recordTx({ tx_hash: result.hash, amount: parseFloat(amount), source_account: address, type: 'Withdraw Supply', success: true });
+        } catch (_) {}
+
+        await get().fetchBalance();
+        return result.hash;
+      },
+
+      depositCollateral: async (amount) => {
+        const { address } = get();
+        if (!address) throw new Error('Wallet not connected');
+        if (!import.meta.env.VITE_POOL_CONTRACT_ID)
+          throw new Error('Pool contract not configured (VITE_POOL_CONTRACT_ID)');
+
+        const { poolDepositCollateral } = await import('./pool_contract.js');
+        const result = await poolDepositCollateral(address, amount);
+
+        const { useLendingStore } = await import('./lending.js');
+        useLendingStore.getState().fetchPoolBalance();
+
+        await get().fetchBalance();
+        return result.hash;
+      },
+
       borrowFunds: async (amount, asset, termDays, paymentMethod) => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
@@ -608,7 +645,8 @@ export const useWalletStore = create(
         const { hash, fd_id } = await poolCreateFD(address, amount, parseInt(termDays));
 
         const { useLendingStore } = await import('./lending.js');
-        useLendingStore.getState().recordFixedDeposit(hash, amount, asset, parseInt(termDays), parseFloat(apyPct));
+        // Pass contract_fd_id so claim works correctly for multiple FDs
+        useLendingStore.getState().recordFixedDeposit(hash, amount, asset, parseInt(termDays), parseFloat(apyPct), fd_id);
 
         try {
           const { api } = await import('./api.js');

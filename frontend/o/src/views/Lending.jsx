@@ -20,13 +20,21 @@ function daysLateNow(iso) {
 }
 
 export default function Lending() {
-  const { supplyLendingPool, borrowFunds, createFixedDeposit, repayLoan } = useWalletStore();
+  const { supplyLendingPool, withdrawSupply, depositCollateral, borrowFunds, createFixedDeposit, repayLoan } = useWalletStore();
+  const { address } = useWalletStore();
   const { loans, deposits, fixedDeposits, creditScore, poolBalance, poolUtilization, fetchPoolBalance, tickPenalties, claimFd } = useLendingStore();
 
   const [tab, setTab] = useState('supply');
   const [supplyAmt, setSupplyAmt] = useState('');
+  const [withdrawAmt, setWithdrawAmt] = useState('');
   const [supplyAsset, setSupplyAsset] = useState('XLM');
   const [isSupplying, setIsSupplying] = useState(false);
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [collateralAmt, setCollateralAmt] = useState('');
+  const [isDepositingCollateral, setIsDepositingCollateral] = useState(false);
+  const [onChainCollateral, setOnChainCollateral] = useState(null);
+  const [onChainHealth, setOnChainHealth] = useState(null);
+  const [onChainMaxBorrow, setOnChainMaxBorrow] = useState(null);
   const [borrowAmt, setBorrowAmt] = useState('');
   const [borrowTerm, setBorrowTerm] = useState(30);
   const [paymentType, setPaymentType] = useState('One-Time Payment');
@@ -44,6 +52,27 @@ export default function Lending() {
     const t = setInterval(() => { fetchPoolBalance(); tickPenalties(); }, 60_000);
     return () => clearInterval(t);
   }, [fetchPoolBalance, tickPenalties]);
+
+  // Fetch on-chain collateral, health factor, max borrow when address changes
+  useEffect(() => {
+    if (!address) return;
+    const fetchOnChain = async () => {
+      try {
+        const { getCollateral, getHealthFactor, getMaxBorrow } = await import('../store/pool_contract.js');
+        const [col, health, maxB] = await Promise.all([
+          getCollateral(address),
+          getHealthFactor(address),
+          getMaxBorrow(address),
+        ]);
+        setOnChainCollateral(col !== null ? Number(col) / 1e7 : 0);
+        setOnChainHealth(health !== null ? Number(health) / 10000 : null);
+        setOnChainMaxBorrow(maxB !== null ? Number(maxB) / 1e7 : 0);
+      } catch (_) {}
+    };
+    fetchOnChain();
+    const t = setInterval(fetchOnChain, 30_000);
+    return () => clearInterval(t);
+  }, [address]);
 
   // Dynamic supply APY based on pool utilization
   const supplyApy = calcSupplyApy(poolUtilization);
@@ -63,6 +92,27 @@ export default function Lending() {
     e.preventDefault(); setIsSupplying(true);
     try { const h = await supplyLendingPool(supplyAmt, supplyAsset); alert(`Supplied!\nHash: ${h}`); setSupplyAmt(''); }
     catch (err) { alert(err.message); } finally { setIsSupplying(false); }
+  };
+
+  const handleWithdraw = async (e) => {
+    e.preventDefault(); setIsWithdrawing(true);
+    try { const h = await withdrawSupply(withdrawAmt); alert(`Withdrawn!\nHash: ${h}`); setWithdrawAmt(''); }
+    catch (err) { alert(err.message); } finally { setIsWithdrawing(false); }
+  };
+
+  const handleDepositCollateral = async (e) => {
+    e.preventDefault(); setIsDepositingCollateral(true);
+    try {
+      const h = await depositCollateral(collateralAmt);
+      alert(`Collateral deposited!\nHash: ${h}`);
+      setCollateralAmt('');
+      // Refresh on-chain values
+      const { getCollateral, getHealthFactor, getMaxBorrow } = await import('../store/pool_contract.js');
+      const [col, health, maxB] = await Promise.all([getCollateral(address), getHealthFactor(address), getMaxBorrow(address)]);
+      setOnChainCollateral(col !== null ? Number(col) / 1e7 : 0);
+      setOnChainHealth(health !== null ? Number(health) / 10000 : null);
+      setOnChainMaxBorrow(maxB !== null ? Number(maxB) / 1e7 : 0);
+    } catch (err) { alert(err.message); } finally { setIsDepositingCollateral(false); }
   };
 
   const handleBorrow = async (e) => {
@@ -140,25 +190,42 @@ export default function Lending() {
 
       {/* SUPPLY */}
       {tab === 'supply' && (
-        <div className="grid-2">
-          <div className="card">
-            <h3 className="card-title">Supply to Pool</h3>
-            <p style={{ fontSize: '0.875rem', marginBottom: '1.5rem', color: 'var(--text-muted)' }}>Funds go directly to the protocol liquidity pool. Earn {supplyApy}% APY.</p>
-            <div style={{ padding: '1rem', background: 'rgba(56,189,248,0.05)', borderRadius: '12px', border: '1px solid rgba(56,189,248,0.1)', marginBottom: '1.5rem' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Current Yield (APY)</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#38bdf8' }}>{supplyApy}%</div>
-            </div>
-            <form onSubmit={handleSupply} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div className="form-group">
-                <label className="form-label">Amount</label>
-                <div className="input-wrapper">
-                  <input type="number" step="0.01" min="0.01" value={supplyAmt} onChange={e => setSupplyAmt(e.target.value)} placeholder="0.00" className="form-input large" required disabled={isSupplying} />
-                  <select className="input-suffix" style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-main)' }} value={supplyAsset} onChange={e => setSupplyAsset(e.target.value)}><option value="XLM">XLM</option></select>
-                </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+          <div className="grid-2">
+            <div className="card">
+              <h3 className="card-title">Supply to Pool</h3>
+              <p style={{ fontSize: '0.875rem', marginBottom: '1.5rem', color: 'var(--text-muted)' }}>Funds go directly to the protocol liquidity pool. Earn {supplyApy}% APY.</p>
+              <div style={{ padding: '1rem', background: 'rgba(56,189,248,0.05)', borderRadius: '12px', border: '1px solid rgba(56,189,248,0.1)', marginBottom: '1.5rem' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Current Yield (APY)</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#38bdf8' }}>{supplyApy}%</div>
               </div>
-              <button type="submit" disabled={isSupplying || !supplyAmt} className="submit-btn">{isSupplying ? 'Supplying...' : 'Supply Liquidity'}</button>
-            </form>
+              <form onSubmit={handleSupply} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Amount</label>
+                  <div className="input-wrapper">
+                    <input type="number" step="0.01" min="0.01" value={supplyAmt} onChange={e => setSupplyAmt(e.target.value)} placeholder="0.00" className="form-input large" required disabled={isSupplying} />
+                    <select className="input-suffix" style={{ background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-main)' }} value={supplyAsset} onChange={e => setSupplyAsset(e.target.value)}><option value="XLM">XLM</option></select>
+                  </div>
+                </div>
+                <button type="submit" disabled={isSupplying || !supplyAmt} className="submit-btn">{isSupplying ? 'Supplying...' : 'Supply Liquidity'}</button>
+              </form>
+            </div>
+
+            <div className="card">
+              <h3 className="card-title">Withdraw Supply</h3>
+              <p style={{ fontSize: '0.875rem', marginBottom: '1.5rem', color: 'var(--text-muted)' }}>Withdraw your supplied liquidity + accrued interest from the contract.</p>
+              <form onSubmit={handleWithdraw} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Amount to Withdraw (XLM)</label>
+                  <input type="number" step="0.01" min="0.01" value={withdrawAmt} onChange={e => setWithdrawAmt(e.target.value)} placeholder="0.00" className="form-input large" required disabled={isWithdrawing} />
+                </div>
+                <button type="submit" disabled={isWithdrawing || !withdrawAmt} className="submit-btn" style={{ backgroundImage: 'linear-gradient(45deg,#38bdf8,#0ea5e9)' }}>
+                  {isWithdrawing ? 'Withdrawing...' : 'Withdraw + Interest'}
+                </button>
+              </form>
+            </div>
           </div>
+
           <div className="card">
             <h3 className="card-title">My Supplies</h3>
             <div className="table-container">
@@ -183,7 +250,46 @@ export default function Lending() {
 
       {/* BORROW */}
       {tab === 'borrow' && (
-        <div className="grid-2">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+          {/* Collateral Panel */}
+          <div className="card" style={{ border: '1px solid rgba(168,85,247,0.2)', background: 'rgba(168,85,247,0.04)' }}>
+            <h3 className="card-title" style={{ marginBottom: '1rem' }}>Your Collateral Position</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Collateral Locked</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#a855f7', marginTop: '0.25rem' }}>
+                  {onChainCollateral !== null ? `${onChainCollateral.toFixed(2)} XLM` : 'Loading...'}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Health Factor</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 700, marginTop: '0.25rem',
+                  color: onChainHealth === null ? 'var(--text-muted)' : onChainHealth >= 1.5 ? '#10b981' : onChainHealth >= 1.1 ? '#f59e0b' : '#ef4444' }}>
+                  {onChainHealth !== null ? onChainHealth.toFixed(2) : '—'}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>≥ 1.0 = safe</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Max Borrow</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#a855f7', marginTop: '0.25rem' }}>
+                  {onChainMaxBorrow !== null ? `${onChainMaxBorrow.toFixed(2)} XLM` : 'Loading...'}
+                </div>
+              </div>
+            </div>
+            <form onSubmit={handleDepositCollateral} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
+              <div style={{ flex: 1 }}>
+                <label className="form-label">Deposit More Collateral (XLM)</label>
+                <input type="number" step="0.01" min="0.01" value={collateralAmt} onChange={e => setCollateralAmt(e.target.value)}
+                  placeholder="0.00" className="form-input" style={{ marginTop: '0.5rem' }} disabled={isDepositingCollateral} />
+              </div>
+              <button type="submit" disabled={isDepositingCollateral || !collateralAmt} className="action-btn"
+                style={{ background: 'rgba(168,85,247,0.1)', borderColor: 'rgba(168,85,247,0.3)', color: '#a855f7', padding: '0.75rem 1.25rem', marginBottom: '0' }}>
+                {isDepositingCollateral ? 'Depositing...' : 'Add Collateral'}
+              </button>
+            </form>
+          </div>
+
+          <div className="grid-2">
           <div className="card">
             <h3 className="card-title">Request Loan</h3>
             <p style={{ fontSize: '0.875rem', marginBottom: '1rem', color: 'var(--text-muted)' }}>Rate based on credit score & term. Penalty: +1.5% per 2 days overdue, -5 credit pts/day.</p>

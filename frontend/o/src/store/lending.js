@@ -112,12 +112,13 @@ export const useLendingStore = create(
       // ─────────────────────────────────────────────────────────────────────
       // FIXED DEPOSIT
       // ─────────────────────────────────────────────────────────────────────
-      recordFixedDeposit: (hash, amount, asset, termDays, apyPct) => {
+      recordFixedDeposit: (hash, amount, asset, termDays, apyPct, contractFdId = null) => {
         const maturesAt = new Date(Date.now() + termDays * MS_PER_DAY).toISOString();
         const payout = calcFdPayout(parseFloat(amount), apyPct, termDays);
         const record = {
           id: `FD-${Date.now()}`,
           hash,
+          contract_fd_id: contractFdId, // on-chain FD ID for claim
           type: 'Fixed Deposit',
           amount: parseFloat(amount),
           asset,
@@ -272,32 +273,48 @@ export const useLendingStore = create(
       },
 
       // ─────────────────────────────────────────────────────────────────────
-      // POOL BALANCE — fetch live from Horizon
+      // POOL BALANCE — fetch from Soroban contract (source of truth)
       // ─────────────────────────────────────────────────────────────────────
       fetchPoolBalance: async () => {
-        const poolAddr = import.meta.env.VITE_POOL_ADDRESS;
-        if (!poolAddr) return;
         try {
-          const res = await fetch(
-            `${import.meta.env.VITE_HORIZON_URL || 'https://horizon-testnet.stellar.org'}/accounts/${poolAddr}`
-          );
-          if (!res.ok) return;
-          const data = await res.json();
-          const native = data.balances?.find((b) => b.asset_type === 'native');
-          const balance = parseFloat(native?.balance || 0);
+          const { getPoolStats, getSupplyApy, getBorrowRate } = await import('./pool_contract.js');
+          const [stats, supplyApyRaw, borrowRateRaw] = await Promise.all([
+            getPoolStats(),
+            getSupplyApy(),
+            getBorrowRate(),
+          ]);
 
-          // Utilization = total active loan principal / pool balance
-          const { loans } = get();
-          const activeDebt = loans
-            .filter((l) => l.status === 'Active' || l.status === 'Partial')
-            .reduce((acc, l) => acc + l.amount - l.amountRepaid, 0);
-
-          const utilization = balance > 0
-            ? Math.min(100, Math.round((activeDebt / (balance + activeDebt)) * 100))
-            : 0;
-
-          set({ poolBalance: balance, poolUtilization: utilization });
-        } catch (_) { /* silent */ }
+          if (stats) {
+            // Contract stores amounts in stroops (1e7), convert to XLM
+            const totalSupplied = Number(stats.total_supplied ?? 0) / 1e7;
+            const totalBorrowed = Number(stats.total_borrowed ?? 0) / 1e7;
+            const utilization = totalSupplied > 0
+              ? Math.min(100, Math.round((totalBorrowed / totalSupplied) * 100))
+              : 0;
+            set({ poolBalance: totalSupplied, poolUtilization: utilization });
+          }
+        } catch (_) {
+          // Fallback to Horizon custody wallet balance
+          const poolAddr = import.meta.env.VITE_POOL_ADDRESS;
+          if (!poolAddr) return;
+          try {
+            const res = await fetch(
+              `${import.meta.env.VITE_HORIZON_URL || 'https://horizon-testnet.stellar.org'}/accounts/${poolAddr}`
+            );
+            if (!res.ok) return;
+            const data = await res.json();
+            const native = data.balances?.find((b) => b.asset_type === 'native');
+            const balance = parseFloat(native?.balance || 0);
+            const { loans } = get();
+            const activeDebt = loans
+              .filter((l) => l.status === 'Active' || l.status === 'Partial')
+              .reduce((acc, l) => acc + l.amount - l.amountRepaid, 0);
+            const utilization = balance > 0
+              ? Math.min(100, Math.round((activeDebt / (balance + activeDebt)) * 100))
+              : 0;
+            set({ poolBalance: balance, poolUtilization: utilization });
+          } catch (_) { /* silent */ }
+        }
       },
 
       // Validate borrow request before executing
