@@ -1,9 +1,10 @@
 /**
  * Orchid Backend API client
- * All calls go through here — single source of truth for metrics.
+ * Handles: user registration, tx recording, metrics.
+ * NOTE: Escrow and lending disbursements are now handled by Soroban contracts.
  */
 
-const BASE = import.meta.env.VITE_API_URL || 'https://orchid-4iyo.onrender.com';
+const BASE = import.meta.env.VITE_API_URL || 'https://orchid-dapp.onrender.com';
 
 async function post(path, body) {
   const res = await fetch(`${BASE}${path}`, {
@@ -38,26 +39,4 @@ export const api = {
 
   /** Audit: recent transactions */
   recentTxs: () => get('/api/transactions/recent'),
-
-  // ── Disbursements — backend signs and sends from custody accounts ──────────
-
-  /** Disburse loan amount from pool → borrower */
-  disburseBorrow: (recipient, amount, loan_id) =>
-    post('/api/disburse/borrow', { recipient, amount, loan_id }),
-
-  /** Pay out matured FD (principal + interest) from pool → user */
-  disburseFdMaturity: (recipient, amount, fd_id) =>
-    post('/api/disburse/fd-maturity', { recipient, amount, fd_id }),
-
-  /** Pay out accrued supply interest from pool → supplier */
-  disburseSupplyInterest: (recipient, amount, supply_id) =>
-    post('/api/disburse/supply-interest', { recipient, amount, supply_id }),
-
-  /** Release escrow funds from escrow account → seller */
-  disburseEscrowRelease: (seller, amount, escrow_id) =>
-    post('/api/disburse/escrow-release', { seller, amount, escrow_id }),
-
-  /** Refund escrow funds from escrow account → buyer */
-  disburseEscrowRefund: (buyer, amount, escrow_id) =>
-    post('/api/disburse/escrow-refund', { buyer, amount, escrow_id }),
 };

@@ -7,12 +7,8 @@ const { processPendingDisbursements } = require('./disburse');
 
 const app = express();
 
-// ── CORS — allow all origins ──────────────────────────────────────────────────
-app.use(cors({
-  origin: '*',
-  credentials: false,
-}));
-
+// ── CORS ──────────────────────────────────────────────────────────────────────
+app.use(cors({ origin: '*', credentials: false }));
 app.use(express.json());
 app.use((req, _res, next) => {
   console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
@@ -27,9 +23,8 @@ app.post('/api/users/register', async (req, res) => {
   const { wallet_address } = req.body;
   if (!wallet_address || wallet_address.length < 10)
     return res.status(400).json({ error: 'Invalid wallet_address' });
-  try {
-    res.json(await db.registerWallet(wallet_address.trim()));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  try { res.json(await db.registerWallet(wallet_address.trim())); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/users/count', async (_req, res) => {
@@ -61,120 +56,10 @@ app.get('/api/transactions/recent', async (_req, res) => {
 });
 
 // ── DISBURSEMENTS ─────────────────────────────────────────────────────────────
+// NOTE: Escrow release/refund are now handled by the Soroban escrow contract.
+// NOTE: Supply/FD operations are now handled by the Soroban pool contract.
+// Backend only handles legacy pool custody wallet disbursements as fallback.
 
-/**
- * POST /api/disburse/borrow
- * Called by frontend after borrow is approved.
- * Backend signs and sends XLM from pool → borrower immediately.
- */
-app.post('/api/disburse/borrow', async (req, res) => {
-  const { recipient, amount, loan_id } = req.body;
-  if (!recipient || !amount) return res.status(400).json({ error: 'recipient and amount required' });
-  try {
-    // Queue for immediate release (releaseAt = now)
-    await db.queueDisbursement({
-      type: 'borrow',
-      recipient,
-      amount: parseFloat(amount),
-      fromAccount: 'pool',
-      releaseAt: new Date().toISOString(),
-      meta: { loan_id },
-    });
-    // Process immediately
-    await processPendingDisbursements();
-    res.json({ success: true, message: `${amount} XLM queued for disbursement to ${recipient}` });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/**
- * POST /api/disburse/supply-interest
- * Called when user claims accrued supply interest.
- * Backend sends interest earned from pool → supplier.
- */
-app.post('/api/disburse/supply-interest', async (req, res) => {
-  const { recipient, amount, supply_id } = req.body;
-  if (!recipient || !amount) return res.status(400).json({ error: 'recipient and amount required' });
-  try {
-    await db.queueDisbursement({
-      type: 'supply_interest',
-      recipient,
-      amount: parseFloat(amount),
-      fromAccount: 'pool',
-      releaseAt: new Date().toISOString(),
-      meta: { supply_id },
-    });
-    await processPendingDisbursements();
-    res.json({ success: true, message: `Supply interest of ${amount} XLM sent to ${recipient}` });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/**
- * POST /api/disburse/fd-maturity
- * Called by frontend when user clicks "Claim" on a matured FD.
- * Backend sends principal + interest from pool → user.
- */
-app.post('/api/disburse/fd-maturity', async (req, res) => {
-  const { recipient, amount, fd_id } = req.body;
-  if (!recipient || !amount) return res.status(400).json({ error: 'recipient and amount required' });
-  try {
-    await db.queueDisbursement({
-      type: 'fd_maturity',
-      recipient,
-      amount: parseFloat(amount),
-      fromAccount: 'pool',
-      releaseAt: new Date().toISOString(),
-      meta: { fd_id },
-    });
-    await processPendingDisbursements();
-    res.json({ success: true, message: `FD payout of ${amount} XLM sent to ${recipient}` });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/**
- * POST /api/disburse/escrow-release
- * Called when buyer confirms delivery — releases escrow funds to seller.
- */
-app.post('/api/disburse/escrow-release', async (req, res) => {
-  const { seller, amount, escrow_id } = req.body;
-  if (!seller || !amount) return res.status(400).json({ error: 'seller and amount required' });
-  try {
-    await db.queueDisbursement({
-      type: 'escrow_release',
-      recipient: seller,
-      amount: parseFloat(amount),
-      fromAccount: 'escrow',
-      releaseAt: new Date().toISOString(),
-      meta: { escrow_id },
-    });
-    await processPendingDisbursements();
-    res.json({ success: true, message: `Escrow released: ${amount} XLM → ${seller}` });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/**
- * POST /api/disburse/escrow-refund
- * Called on dispute/expiry — refunds escrow funds back to buyer.
- */
-app.post('/api/disburse/escrow-refund', async (req, res) => {
-  const { buyer, amount, escrow_id } = req.body;
-  if (!buyer || !amount) return res.status(400).json({ error: 'buyer and amount required' });
-  try {
-    await db.queueDisbursement({
-      type: 'escrow_refund',
-      recipient: buyer,
-      amount: parseFloat(amount),
-      fromAccount: 'escrow',
-      releaseAt: new Date().toISOString(),
-      meta: { escrow_id },
-    });
-    await processPendingDisbursements();
-    res.json({ success: true, message: `Escrow refunded: ${amount} XLM → ${buyer}` });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/**
- * GET /api/disburse/pending  (audit)
- */
 app.get('/api/disburse/pending', async (_req, res) => {
   try { res.json({ disbursements: await db.getAllDisbursements() }); }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -184,12 +69,9 @@ app.get('/api/disburse/pending', async (_req, res) => {
 app.use((err, _req, res, _next) => res.status(500).json({ error: err.message }));
 app.use((req, res) => res.status(404).json({ error: 'Not found', path: req.path }));
 
-// ── Scheduler — check pending disbursements every 60s ────────────────────────
+// ── Scheduler ─────────────────────────────────────────────────────────────────
 setInterval(async () => {
-  try {
-    await processPendingDisbursements();
-    console.log('[Scheduler] Disbursement check complete');
-  }
+  try { await processPendingDisbursements(); }
   catch (e) { console.error('[Scheduler] Error:', e.message); }
 }, 60_000);
 
