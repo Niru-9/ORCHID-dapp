@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useWalletStore } from '../store/wallet';
 
 export default function Escrow() {
-  const { createEscrow, releaseEscrow, refundEscrow, disputeEscrow, checkEscrowExpiry, transactions, address } = useWalletStore();
+  const { createEscrow, releaseEscrow, refundEscrow, disputeEscrow, autoReleaseEscrow, checkEscrowExpiry, transactions, address } = useWalletStore();
   
   const [seller, setSeller] = useState('');
   const [amount, setAmount] = useState('');
@@ -109,7 +109,12 @@ export default function Escrow() {
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
       <div className="view-header">
         <h2 className="view-title">Smart Escrow Payments</h2>
-        <p className="view-subtitle">Trustless milestone-based payments. Funds are locked until delivery is confirmed or the contract expires.</p>
+        <p className="view-subtitle">
+          Trustless on-chain escrow via Soroban smart contract. Funds locked in contract — no custody wallet.{' '}
+          <a href={`https://stellar.expert/explorer/testnet/contract/${import.meta.env.VITE_ESCROW_CONTRACT_ID}`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-glow)', fontSize: '0.75rem' }}>
+            View Contract ↗
+          </a>
+        </p>
       </div>
 
       {/* Stats Row — Custody Holdings intentionally hidden (internal-only data) */}
@@ -209,14 +214,18 @@ export default function Escrow() {
                           <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                             {tx.status === 'Funded' && (
                               <>
-                                <button
-                                  className="action-btn"
-                                  style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: '#10b981' }}
-                                  onClick={() => handleMarkDelivered(tx.id)}
-                                  disabled={processingId === tx.id}
-                                >
-                                  {processingId === tx.id ? 'Processing...' : 'Mark Delivered'}
-                                </button>
+                                {tx.escrow_id ? (
+                                  <button
+                                    className="action-btn"
+                                    style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', background: 'rgba(16,185,129,0.1)', borderColor: 'rgba(16,185,129,0.3)', color: '#10b981' }}
+                                    onClick={() => handleMarkDelivered(tx.id)}
+                                    disabled={processingId === tx.id}
+                                  >
+                                    {processingId === tx.id ? 'Processing...' : 'Mark Delivered'}
+                                  </button>
+                                ) : (
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Legacy escrow</span>
+                                )}
                                 <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }} onClick={() => disputeEscrow(tx.id)}>Dispute</button>
                               </>
                             )}
@@ -237,10 +246,16 @@ export default function Escrow() {
                               <button
                                 className="action-btn"
                                 style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(249,115,22,0.3)', color: '#f97316' }}
-                                onClick={() => handleRefund(tx.id)}
+                                onClick={() => {
+                                  setProcessingId(tx.id);
+                                  autoReleaseEscrow(tx.id)
+                                    .then(hash => alert(`Auto-released! Hash: ${hash}`))
+                                    .catch(err => alert(err.message))
+                                    .finally(() => setProcessingId(null));
+                                }}
                                 disabled={processingId === tx.id}
                               >
-                                {processingId === tx.id ? 'Processing...' : 'Claim Refund'}
+                                {processingId === tx.id ? 'Processing...' : 'Auto Release'}
                               </button>
                             )}
                             {(tx.status === 'Released' || tx.status === 'Refunded' || tx.status?.includes('Refunded')) && (

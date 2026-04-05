@@ -355,60 +355,64 @@ export const useWalletStore = create(
         set((s) => ({ savedRouteTemplates: s.savedRouteTemplates.filter((t) => t.name !== name) }));
       },
 
-      // ── Escrow ─────────────────────────────────────────────────────────────
-      // Funds are sent to the ESCROW custody account and held there.
-      // Release = buyer sends from escrow to seller (tracked locally).
-      // Refund  = escrow sends back to buyer (tracked locally).
+      // ── Escrow — Soroban Contract ──────────────────────────────────────────
+      // Funds go directly into the deployed Soroban escrow contract.
+      // No custody wallet — the contract enforces all rules trustlessly.
       createEscrow: async (seller, amount, asset, description, expiryDays) => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
-        if (!ESCROW_ADDRESS) throw new Error('Escrow custody address not configured (VITE_ESCROW_ADDRESS)');
+        if (!import.meta.env.VITE_ESCROW_CONTRACT_ID)
+          throw new Error('Escrow contract not configured (VITE_ESCROW_CONTRACT_ID)');
 
-        const memo = description ? description.slice(0, 28) : 'Orchid Escrow';
-        // Validate seller account exists before locking funds
-        try { await server.loadAccount(seller); } catch {
-          throw new Error(`Seller account does not exist on testnet. They need to fund it at friendbot.stellar.org`);
-        }
-        // Funds go to the ESCROW custody account, NOT directly to seller yet
-        const res = await buildAndSign(address, (account, fee) =>
-          new TransactionBuilder(account, { fee: fee.toString(), networkPassphrase: NETWORK_PASSPHRASE })
-            .addOperation(Operation.payment({ destination: ESCROW_ADDRESS, asset: Asset.native(), amount: stellarAmount(amount) }))
-            .addMemo(Memo.text(memo))
-            .setTimeout(60)
-            .build(),
-          { amount: parseFloat(amount), type: 'Create Escrow' }
+        const { contractCreateEscrow } = await import('./escrow_contract.js');
+        const { escrow_id, hash } = await contractCreateEscrow(
+          address, seller, parseFloat(amount), parseInt(expiryDays)
         );
 
         const expiresAt = new Date(Date.now() + parseInt(expiryDays) * 86400000).toISOString();
         const record = {
-          id: shortId(), hash: res.hash, type: 'Create Escrow',
-          amount: `${amount} ${asset}`, merchant: seller, description,
-          buyer: address, // store buyer address for refunds
-          status: 'Funded', expiresAt, time: new Date().toISOString(),
+          id: shortId(),
+          hash,
+          type: 'Create Escrow',
+          amount: `${amount} ${asset}`,
+          merchant: seller,
+          description,
+          buyer: address,
+          escrow_id,           // on-chain contract escrow ID
+          status: 'Funded',
+          expiresAt,
+          time: new Date().toISOString(),
         };
+
+        // Record in analytics
+        const { useAnalytics } = await import('./analytics.js');
+        useAnalytics.getState().recordLocalTx({ txHash: hash, amount: parseFloat(amount), sourceAccount: address, type: 'Create Escrow' });
+        useAnalytics.getState().confirmTx(hash, true);
+        try {
+          const { api } = await import('./api.js');
+          await api.recordTx({ tx_hash: hash, amount: parseFloat(amount), source_account: address, type: 'Create Escrow', success: true });
+        } catch (_) {}
 
         set((s) => ({ transactions: [record, ...s.transactions] }));
         await get().fetchBalance();
-        return res.hash;
+        return hash;
       },
 
       releaseEscrow: async (id) => {
-        const { transactions } = get();
+        const { transactions, address } = get();
         const escrow = transactions.find(t => t.id === id);
         if (!escrow) throw new Error('Escrow not found');
 
-        // Backend signs and sends from escrow account → seller
-        const { api } = await import('./api.js');
-        const amountNum = parseFloat(escrow.amount.split(' ')[0]);
-        await api.disburseEscrowRelease(escrow.merchant, amountNum, id);
+        const { contractConfirmDelivery } = await import('./escrow_contract.js');
+        const result = await contractConfirmDelivery(address, escrow.escrow_id);
 
         set((s) => ({
           transactions: s.transactions.map((t) =>
-            t.id === id ? { ...t, status: 'Released' } : t
+            t.id === id ? { ...t, status: 'Released', releaseHash: result.hash } : t
           ),
         }));
         await get().fetchBalance();
-        return 'released';
+        return result.hash;
       },
 
       refundEscrow: async (id) => {
@@ -416,19 +420,51 @@ export const useWalletStore = create(
         const escrow = transactions.find(t => t.id === id);
         if (!escrow) throw new Error('Escrow not found');
 
-        // Refund goes to the original buyer who locked the funds
-        const refundTo = escrow.buyer || address;
-        const { api } = await import('./api.js');
-        const amountNum = parseFloat(escrow.amount.split(' ')[0]);
-        await api.disburseEscrowRefund(refundTo, amountNum, id);
+        // Buyer approves refund → contract sends back to buyer
+        const { contractApproveRefund } = await import('./escrow_contract.js');
+        const result = await contractApproveRefund(address, escrow.escrow_id);
 
         set((s) => ({
           transactions: s.transactions.map((t) =>
-            t.id === id ? { ...t, status: 'Refunded' } : t
+            t.id === id ? { ...t, status: 'Refunded', refundHash: result.hash } : t
           ),
         }));
         await get().fetchBalance();
-        return 'refunded';
+        return result.hash;
+      },
+
+      // Seller requests refund (dispute flow)
+      requestEscrowRefund: async (id) => {
+        const { transactions, address } = get();
+        const escrow = transactions.find(t => t.id === id);
+        if (!escrow) throw new Error('Escrow not found');
+
+        const { contractRequestRefund } = await import('./escrow_contract.js');
+        await contractRequestRefund(address, escrow.escrow_id);
+
+        set((s) => ({
+          transactions: s.transactions.map((t) =>
+            t.id === id ? { ...t, status: 'Disputed' } : t
+          ),
+        }));
+      },
+
+      // Auto-release after deadline (anyone can call)
+      autoReleaseEscrow: async (id) => {
+        const { transactions, address } = get();
+        const escrow = transactions.find(t => t.id === id);
+        if (!escrow) throw new Error('Escrow not found');
+
+        const { contractAutoRelease } = await import('./escrow_contract.js');
+        const result = await contractAutoRelease(address, escrow.escrow_id);
+
+        set((s) => ({
+          transactions: s.transactions.map((t) =>
+            t.id === id ? { ...t, status: 'Released', releaseHash: result.hash } : t
+          ),
+        }));
+        await get().fetchBalance();
+        return result.hash;
       },
 
       markDelivered: (id) => {
@@ -458,75 +494,69 @@ export const useWalletStore = create(
         }));
       },
 
-      // ── Lending ────────────────────────────────────────────────────────────
-      // All lending logic lives in useLendingStore (src/store/lending.js).
-      // These wallet store functions handle the on-chain tx, then delegate
-      // record-keeping to the lending store.
+      // ── Lending — Soroban Pool Contract ───────────────────────────────────
+      // All funds go directly into the deployed Soroban pool contract.
+      // No custody wallet — the contract enforces all rules trustlessly.
 
       supplyLendingPool: async (amount, asset) => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
-        if (!POOL_ADDRESS) throw new Error('Pool address not configured (VITE_POOL_ADDRESS)');
-        if (parseFloat(amount) <= 0) throw new Error('Invalid amount');
+        if (!import.meta.env.VITE_POOL_CONTRACT_ID)
+          throw new Error('Pool contract not configured (VITE_POOL_CONTRACT_ID)');
 
-        const res = await buildAndSign(address, (account, fee) =>
-          new TransactionBuilder(account, { fee: fee.toString(), networkPassphrase: NETWORK_PASSPHRASE })
-            .addOperation(Operation.payment({ destination: POOL_ADDRESS, asset: Asset.native(), amount: stellarAmount(amount) }))
-            .addMemo(Memo.text('Orchid Supply'))
-            .setTimeout(60)
-            .build(),
-          { amount: parseFloat(amount), type: 'Supply' }
-        );
+        const { poolDeposit } = await import('./pool_contract.js');
+        const result = await poolDeposit(address, amount);
 
         const { useLendingStore } = await import('./lending.js');
-        useLendingStore.getState().recordSupply(res.hash, amount, asset);
-        useLendingStore.getState().fetchPoolBalance();
+        useLendingStore.getState().recordSupply(result.hash, amount, asset);
+
+        // Record in analytics
+        const { useAnalytics } = await import('./analytics.js');
+        useAnalytics.getState().recordLocalTx({ txHash: result.hash, amount: parseFloat(amount), sourceAccount: address, type: 'Supply' });
+        useAnalytics.getState().confirmTx(result.hash, true);
+        try {
+          const { api } = await import('./api.js');
+          await api.recordTx({ tx_hash: result.hash, amount: parseFloat(amount), source_account: address, type: 'Supply', success: true });
+        } catch (_) {}
 
         await get().fetchBalance();
-        return res.hash;
+        return result.hash;
       },
 
       borrowFunds: async (amount, asset, termDays, paymentMethod) => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
-        if (!POOL_ADDRESS) throw new Error('Pool address not configured (VITE_POOL_ADDRESS)');
+        if (!import.meta.env.VITE_POOL_CONTRACT_ID)
+          throw new Error('Pool contract not configured (VITE_POOL_CONTRACT_ID)');
 
         const { useLendingStore } = await import('./lending.js');
         const lending = useLendingStore.getState();
-
-        // Validate before any tx
         lending.validateBorrow(amount);
 
-        // Pool disburses to borrower — user signs a tx FROM pool TO themselves
-        // Since we don't hold pool secret key on client, we record the intent
-        // and the actual disbursement is tracked. The on-chain tx here is the
-        // repayment authorization memo so the loan is anchored on-chain.
-        // For testnet demo: we send a 0.0000001 XLM "loan marker" tx to pool
-        // with memo, and record the full loan amount locally.
-        const markerTx = await buildAndSign(address, (account, fee) =>
-          new TransactionBuilder(account, { fee: fee.toString(), networkPassphrase: NETWORK_PASSPHRASE })
-            .addOperation(Operation.payment({
-              destination: POOL_ADDRESS,
-              asset: Asset.native(),
-              amount: '0.0000001',
-            }))
-            .addMemo(Memo.text(`Orchid Loan ${parseFloat(amount).toFixed(2)}`))
-            .setTimeout(60)
-            .build(),
-          { amount: 0.0000001, type: 'Borrow' }
-        );
+        const { poolDepositCollateral, poolBorrow, getMaxBorrow } = await import('./pool_contract.js');
 
-        const loan = lending.recordBorrow(markerTx.hash, amount, asset, parseInt(termDays), paymentMethod);
-        lending.fetchPoolBalance();
+        // Check if user has collateral on-chain; if not, auto-deposit collateral = 1.6x amount
+        const maxBorrow = await getMaxBorrow(address);
+        if (!maxBorrow || parseFloat(maxBorrow) / 1e7 < parseFloat(amount)) {
+          // Need to deposit collateral first: 160% of borrow amount
+          const collateralNeeded = (parseFloat(amount) * 1.6).toFixed(7);
+          await poolDepositCollateral(address, collateralNeeded);
+        }
 
-        // Backend disburses actual XLM from pool → borrower's wallet
+        const { hash, loan_id } = await poolBorrow(address, amount, parseInt(termDays));
+
+        const loan = lending.recordBorrow(hash, amount, asset, parseInt(termDays), paymentMethod);
+
+        // Store the on-chain loan ID so repay can reference it
+        if (loan_id !== null) {
+          const { useLendingStore: ls } = await import('./lending.js');
+          ls.getState().updateLoanContractId(loan.id, loan_id);
+        }
+
         try {
           const { api } = await import('./api.js');
-          await api.disburseBorrow(address, parseFloat(amount), loan.id);
-        } catch (e) {
-          console.warn('[Orchid] Borrow disbursement failed:', e.message);
-          throw new Error(`Loan recorded but disbursement failed: ${e.message}`);
-        }
+          await api.recordTx({ tx_hash: hash, amount: parseFloat(amount), source_account: address, type: 'Borrow', success: true });
+        } catch (_) {}
 
         await get().fetchBalance();
         return loan.id;
@@ -535,65 +565,58 @@ export const useWalletStore = create(
       repayLoan: async (loanId, partialAmount) => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
-        if (!POOL_ADDRESS) throw new Error('Pool address not configured (VITE_POOL_ADDRESS)');
+        if (!import.meta.env.VITE_POOL_CONTRACT_ID)
+          throw new Error('Pool contract not configured (VITE_POOL_CONTRACT_ID)');
 
         const { useLendingStore } = await import('./lending.js');
         const lending = useLendingStore.getState();
-        const loan = lending.loans.find((l) => l.id === loanId);
+        const loan = lending.loans.find(l => l.id === loanId);
         if (!loan) throw new Error('Loan not found');
         if (loan.status === 'Completed') throw new Error('Loan already fully repaid');
 
-        // Calculate current repay amount with any penalties
         const { calcRepayAmount } = await import('./lending.js');
         const now = new Date();
         const daysLate = Math.max(0, Math.ceil((now - new Date(loan.dueDate)) / 86400000));
         const fullRepay = calcRepayAmount(loan.amount, loan.apy, loan.term, daysLate);
         const remaining = fullRepay - loan.amountRepaid;
-
-        // Use partial amount if provided, otherwise pay full remaining
-        const payAmt = partialAmount
-          ? Math.min(parseFloat(partialAmount), remaining)
-          : remaining;
-
+        const payAmt = partialAmount ? Math.min(parseFloat(partialAmount), remaining) : remaining;
         if (payAmt <= 0) throw new Error('Nothing to repay');
 
-        const res = await buildAndSign(address, (account, fee) =>
-          new TransactionBuilder(account, { fee: fee.toString(), networkPassphrase: NETWORK_PASSPHRASE })
-            .addOperation(Operation.payment({ destination: POOL_ADDRESS, asset: Asset.native(), amount: stellarAmount(payAmt) }))
-            .addMemo(Memo.text('Orchid Repay'))
-            .setTimeout(60)
-            .build(),
-          { amount: payAmt, type: 'Repay' }
-        );
+        const { poolRepay } = await import('./pool_contract.js');
+        // loan.contract_loan_id is the on-chain ID returned by poolBorrow
+        const contractLoanId = loan.contract_loan_id || 1;
+        const result = await poolRepay(address, contractLoanId, payAmt);
 
-        const result = lending.recordRepayment(loanId, payAmt, res.hash);
-        lending.fetchPoolBalance();
+        const repayResult = lending.recordRepayment(loanId, payAmt, result.hash);
+
+        try {
+          const { api } = await import('./api.js');
+          await api.recordTx({ tx_hash: result.hash, amount: payAmt, source_account: address, type: 'Repay', success: true });
+        } catch (_) {}
 
         await get().fetchBalance();
-        return { hash: res.hash, ...result };
+        return { hash: result.hash, ...repayResult };
       },
 
       createFixedDeposit: async (amount, asset, termDays, apyPct) => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
-        if (!POOL_ADDRESS) throw new Error('Pool address not configured (VITE_POOL_ADDRESS)');
-        if (parseFloat(amount) <= 0) throw new Error('Invalid amount');
+        if (!import.meta.env.VITE_POOL_CONTRACT_ID)
+          throw new Error('Pool contract not configured (VITE_POOL_CONTRACT_ID)');
 
-        const res = await buildAndSign(address, (account, fee) =>
-          new TransactionBuilder(account, { fee: fee.toString(), networkPassphrase: NETWORK_PASSPHRASE })
-            .addOperation(Operation.payment({ destination: POOL_ADDRESS, asset: Asset.native(), amount: stellarAmount(amount) }))
-            .addMemo(Memo.text('Orchid FD'))
-            .setTimeout(60)
-            .build(),
-          { amount: parseFloat(amount), type: 'Fixed Deposit' }
-        );
+        const { poolCreateFD } = await import('./pool_contract.js');
+        const { hash, fd_id } = await poolCreateFD(address, amount, parseInt(termDays));
 
         const { useLendingStore } = await import('./lending.js');
-        useLendingStore.getState().recordFixedDeposit(res.hash, amount, asset, parseInt(termDays), parseFloat(apyPct));
-        useLendingStore.getState().fetchPoolBalance();
+        useLendingStore.getState().recordFixedDeposit(hash, amount, asset, parseInt(termDays), parseFloat(apyPct));
+
+        try {
+          const { api } = await import('./api.js');
+          await api.recordTx({ tx_hash: hash, amount: parseFloat(amount), source_account: address, type: 'Fixed Deposit', success: true });
+        } catch (_) {}
 
         await get().fetchBalance();
-        return res.hash;
+        return hash;
       },
     }),
     {

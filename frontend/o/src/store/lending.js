@@ -142,13 +142,14 @@ export const useLendingStore = create(
           throw new Error(`Not matured yet — ${daysLeft} day(s) remaining`);
         }
 
-        // Call backend to send payout from pool → user
-        const { api } = await import('./api.js');
-        await api.disburseFdMaturity(userAddress, fd.payout, fdId);
+        // Call pool contract to claim FD — contract sends payout to user
+        const { poolClaimFD } = await import('./pool_contract.js');
+        const contractFdId = fd.contract_fd_id || 1;
+        const result = await poolClaimFD(userAddress, contractFdId);
 
         set((s) => ({
           fixedDeposits: s.fixedDeposits.map((f) =>
-            f.id === fdId ? { ...f, status: 'Matured' } : f
+            f.id === fdId ? { ...f, status: 'Matured', claimHash: result.hash } : f
           ),
         }));
         return fd.payout;
@@ -176,6 +177,7 @@ export const useLendingStore = create(
         const loan = {
           id: `LOAN-${Date.now()}`,
           hash,
+          contract_loan_id: null, // set by borrowFunds after contract call
           type: 'Borrow',
           amount: parseFloat(amount),
           asset,
@@ -197,8 +199,14 @@ export const useLendingStore = create(
         return loan;
       },
 
-      // ─────────────────────────────────────────────────────────────────────
-      // REPAY (full or partial)
+      // Update contract loan ID after on-chain borrow
+      updateLoanContractId: (localId, contractLoanId) => {
+        set((s) => ({
+          loans: s.loans.map(l =>
+            l.id === localId ? { ...l, contract_loan_id: contractLoanId } : l
+          ),
+        }));
+      },
       // Called AFTER the on-chain repayment tx is confirmed.
       // ─────────────────────────────────────────────────────────────────────
       recordRepayment: (loanId, paidAmount, hash) => {
