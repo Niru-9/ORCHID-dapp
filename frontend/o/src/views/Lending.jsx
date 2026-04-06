@@ -20,8 +20,7 @@ function daysLateNow(iso) {
 }
 
 export default function Lending() {
-  const { supplyLendingPool, withdrawSupply, depositCollateral, borrowFunds, createFixedDeposit, repayLoan } = useWalletStore();
-  const { address } = useWalletStore();
+  const { supplyLendingPool, withdrawSupply, depositCollateral, borrowFunds, createFixedDeposit, repayLoan, address } = useWalletStore();
   const { loans, deposits, fixedDeposits, creditScore, poolBalance, poolUtilization, fetchPoolBalance, tickPenalties, claimFd } = useLendingStore();
 
   const [tab, setTab] = useState('supply');
