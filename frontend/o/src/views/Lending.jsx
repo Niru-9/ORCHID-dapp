@@ -389,6 +389,7 @@ export default function Lending() {
             </div>
           </div>
         </div>
+        </div>
       )}
 
       {/* FIXED DEPOSIT */}
