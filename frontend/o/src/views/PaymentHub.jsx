@@ -37,14 +37,14 @@ function PaymentRouter() {
     setShowConfirm(false); setIsRouting(true);
     try {
       const hash = await routePayment(totalAmount, splits, 'XLM');
-      console.warn(`Payment routed successfully!\nHash: ${hash}`);
+      toast.txSuccess(`Payment routed to ${splits.length} recipients!`, hash);
       setTotalAmount(''); setSplits([{ address: '', percentage: 100 }]);
     } catch (err) { toast.error(err.message); }
     finally { setIsRouting(false); }
   };
   const handleSubmitForm = (e) => {
     e.preventDefault();
-    if (totalPercent !== 100) { console.warn(`Percentages must equal 100%. Currently: ${totalPercent}%`); return; }
+    if (totalPercent !== 100) { toast.warning(`Percentages must equal 100%. Currently: ${totalPercent}%`); return; }
     setShowConfirm(true);
   };
 
@@ -192,6 +192,7 @@ function PaymentRouter() {
 // --- Internal: Bulk Payouts Tab ---
 function BulkPayoutsTab() {
   const { batchPayment, transactions, balance } = useWalletStore();
+  const toast = useToast();
   const [recipients, setRecipients] = useState([{ address: '', amount: '' }]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -223,7 +224,7 @@ function BulkPayoutsTab() {
     setIsProcessing(true);
     try {
       const hash = await batchPayment(valid, 'XLM');
-      console.warn(`Bulk Payout processed!\nHash: ${hash}`);
+      toast.txSuccess(`Bulk payout to ${valid.length} recipients complete!`, hash);
       setRecipients([{ address: '', amount: '' }]);
     } catch (err) { toast.error(err.message); }
     finally { setIsProcessing(false); }
@@ -232,7 +233,7 @@ function BulkPayoutsTab() {
   const handleSubmitForm = (e) => {
     e.preventDefault();
     if (validCount === 0) { toast.warning('Add at least one valid recipient.'); return; }
-    if (exceedsBalance) { console.warn(`Total exceeds your balance.`); return; }
+    if (exceedsBalance) { toast.error('Total exceeds your balance.'); return; }
     setShowConfirm(true);
   };
 
