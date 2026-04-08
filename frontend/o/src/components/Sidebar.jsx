@@ -3,7 +3,7 @@ import { useWalletStore } from '../store/wallet';
 import {
   ShieldCheck, Landmark,
   Zap, BarChart2, Hexagon, X, LogOut,
-  Activity, Globe, PlaneTakeoff,
+  Activity, Globe, PlaneTakeoff, Briefcase, AlertTriangle, Clock,
 } from 'lucide-react';
 
 export default function Sidebar({ onClose }) {
@@ -11,10 +11,13 @@ export default function Sidebar({ onClose }) {
 
   const navItems = [
     { path: '/dashboard',             label: 'Cockpit',            icon: PlaneTakeoff },
+    { path: '/portfolio',             label: 'Portfolio',          icon: Briefcase },
     { path: '/payment-hub',           label: 'Payment Hub',        icon: Zap },
     { path: '/escrow',                label: 'Smart Escrow',       icon: ShieldCheck },
     { path: '/lending',               label: 'DeFi Lending',       icon: Landmark },
+    { path: '/liquidation',           label: 'Liquidation',        icon: AlertTriangle },
     { path: '/credit-score',          label: 'Credit Score',       icon: BarChart2 },
+    { path: '/history',               label: 'Tx History',         icon: Clock },
     { path: '/network-transactions',  label: 'Live Transactions',  icon: Activity },
     { path: '/network-stats',         label: 'Network Stats',      icon: Globe },
   ];

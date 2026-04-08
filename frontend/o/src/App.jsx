@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useWalletStore } from './store/wallet';
 
@@ -11,6 +10,9 @@ import PaymentHub from './views/PaymentHub';
 import CreditScore from './views/CreditScore';
 import NetworkTransactions from './views/NetworkTransactions';
 import NetworkStats from './views/NetworkStats';
+import Portfolio from './views/Portfolio';
+import Liquidation from './views/Liquidation';
+import TransactionHistory from './views/TransactionHistory';
 
 export default function App() {
   const { address } = useWalletStore();
@@ -18,7 +20,6 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public Route */}
         <Route
           path="/"
           element={
@@ -31,26 +32,22 @@ export default function App() {
         />
 
         <Route element={<Layout />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/escrow" element={<Escrow />} />
-          <Route path="/lending" element={<Lending />} />
-
-          {/* Unified Payment Hub (replaces separate routes) */}
-          <Route path="/payment-hub" element={<PaymentHub />} />
-
-          {/* Legacy redirects — old bookmarks still work */}
-          <Route path="/merchant-payments" element={<Navigate to="/payment-hub" replace />} />
-          <Route path="/bulk-payouts" element={<Navigate to="/payment-hub" replace />} />
-
-          {/* Credit Score */}
-          <Route path="/credit-score" element={<CreditScore />} />
-
-          {/* Network */}
+          <Route path="/dashboard"            element={<Dashboard />} />
+          <Route path="/portfolio"            element={<Portfolio />} />
+          <Route path="/payment-hub"          element={<PaymentHub />} />
+          <Route path="/escrow"               element={<Escrow />} />
+          <Route path="/lending"              element={<Lending />} />
+          <Route path="/liquidation"          element={<Liquidation />} />
+          <Route path="/credit-score"         element={<CreditScore />} />
           <Route path="/network-transactions" element={<NetworkTransactions />} />
-          <Route path="/network-stats" element={<NetworkStats />} />
+          <Route path="/network-stats"        element={<NetworkStats />} />
+          <Route path="/history"              element={<TransactionHistory />} />
+
+          {/* Legacy redirects */}
+          <Route path="/merchant-payments" element={<Navigate to="/payment-hub" replace />} />
+          <Route path="/bulk-payouts"      element={<Navigate to="/payment-hub" replace />} />
         </Route>
 
-        {/* Fallback Route */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

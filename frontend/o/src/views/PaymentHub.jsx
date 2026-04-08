@@ -2,10 +2,11 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useWalletStore } from '../store/wallet';
 import { Users, GitBranch } from 'lucide-react';
+import { useToast } from '../components/Toast';
 
 // --- Internal: Payment Router Tab ---
 function PaymentRouter() {
-  const { routePayment, transactions, savedRouteTemplates, saveRouteTemplate, deleteRouteTemplate } = useWalletStore();
+  const toast = useToast(); const { routePayment, transactions, savedRouteTemplates, saveRouteTemplate, deleteRouteTemplate } = useWalletStore();
   const [totalAmount, setTotalAmount] = useState('');
   const [splits, setSplits] = useState([{ address: '', percentage: 100 }]);
   const [isRouting, setIsRouting] = useState(false);
@@ -36,14 +37,14 @@ function PaymentRouter() {
     setShowConfirm(false); setIsRouting(true);
     try {
       const hash = await routePayment(totalAmount, splits, 'XLM');
-      alert(`Payment routed successfully!\nHash: ${hash}`);
+      console.warn(`Payment routed successfully!\nHash: ${hash}`);
       setTotalAmount(''); setSplits([{ address: '', percentage: 100 }]);
-    } catch (err) { alert(err.message); }
+    } catch (err) { toast.error(err.message); }
     finally { setIsRouting(false); }
   };
   const handleSubmitForm = (e) => {
     e.preventDefault();
-    if (totalPercent !== 100) { alert(`Percentages must equal 100%. Currently: ${totalPercent}%`); return; }
+    if (totalPercent !== 100) { console.warn(`Percentages must equal 100%. Currently: ${totalPercent}%`); return; }
     setShowConfirm(true);
   };
 
@@ -210,7 +211,7 @@ function BulkPayoutsTab() {
       const lines = event.target.result.split('\n').filter(l => l.trim());
       const parsed = lines.map(line => { const p = line.split(',').map(x => x.trim()); return { address: p[0] || '', amount: p[1] || '' }; }).filter(p => p.address && p.amount);
       if (parsed.length > 0) setRecipients(parsed);
-      else alert('Invalid CSV. Expected: address,amount (one per line)');
+      else toast.warning('Invalid CSV. Expected: address,amount (one per line)');
     };
     reader.readAsText(file); e.target.value = '';
   };
@@ -218,20 +219,20 @@ function BulkPayoutsTab() {
   const handleExecuteBulk = async () => {
     setShowConfirm(false);
     const valid = recipients.filter(r => r.address && r.amount && parseFloat(r.amount) > 0);
-    if (valid.length === 0) { alert('Add at least one valid recipient.'); return; }
+    if (valid.length === 0) { toast.warning('Add at least one valid recipient.'); return; }
     setIsProcessing(true);
     try {
       const hash = await batchPayment(valid, 'XLM');
-      alert(`Bulk Payout processed!\nHash: ${hash}`);
+      console.warn(`Bulk Payout processed!\nHash: ${hash}`);
       setRecipients([{ address: '', amount: '' }]);
-    } catch (err) { alert(err.message); }
+    } catch (err) { toast.error(err.message); }
     finally { setIsProcessing(false); }
   };
 
   const handleSubmitForm = (e) => {
     e.preventDefault();
-    if (validCount === 0) { alert('Add at least one valid recipient.'); return; }
-    if (exceedsBalance) { alert(`Total exceeds your balance.`); return; }
+    if (validCount === 0) { toast.warning('Add at least one valid recipient.'); return; }
+    if (exceedsBalance) { console.warn(`Total exceeds your balance.`); return; }
     setShowConfirm(true);
   };
 
@@ -399,3 +400,5 @@ export default function PaymentHub() {
     </motion.div>
   );
 }
+
+

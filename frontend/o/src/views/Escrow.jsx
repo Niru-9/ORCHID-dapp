@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useWalletStore } from '../store/wallet';
+import { useToast } from '../components/Toast';
 
 export default function Escrow() {
   const { createEscrow, releaseEscrow, refundEscrow, disputeEscrow, autoReleaseEscrow, checkEscrowExpiry, transactions, address } = useWalletStore();
+  const toast = useToast();
   
   const [seller, setSeller] = useState('');
   const [amount, setAmount] = useState('');
@@ -25,10 +27,10 @@ export default function Escrow() {
     setIsCreating(true);
     try {
       const hash = await createEscrow(seller, amount, asset, description, expiryDays);
-      alert(`Escrow created! Funds locked in custody.\nHash: ${hash}`);
+      toast.txSuccess('Escrow created! Funds locked in contract.', hash);
       setSeller(''); setAmount(''); setDescription('');
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setIsCreating(false);
     }
@@ -51,9 +53,9 @@ export default function Escrow() {
     setProcessingId(id);
     try {
       const hash = await releaseEscrow(id);
-      alert(`✅ Delivery confirmed & payment released!\nFunds sent to seller.\nHash: ${hash}`);
+      toast.txSuccess('Delivery confirmed! Payment sent to seller.', hash);
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setProcessingId(null);
     }
@@ -75,9 +77,9 @@ export default function Escrow() {
     setProcessingId(id);
     try {
       const hash = await refundEscrow(id);
-      alert(`Funds refunded to your wallet!\nHash: ${hash}`);
+      toast.txSuccess('Funds refunded to your wallet!', hash);
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setProcessingId(null);
     }
@@ -249,8 +251,8 @@ export default function Escrow() {
                                 onClick={() => {
                                   setProcessingId(tx.id);
                                   autoReleaseEscrow(tx.id)
-                                    .then(hash => alert(`Auto-released! Hash: ${hash}`))
-                                    .catch(err => alert(err.message))
+                                    .then(hash => toast.txSuccess('Auto-released to seller!', hash))
+                                    .catch(err => toast.error(err.message))
                                     .finally(() => setProcessingId(null));
                                 }}
                                 disabled={processingId === tx.id}
@@ -284,3 +286,5 @@ export default function Escrow() {
     </motion.div>
   );
 }
+
+

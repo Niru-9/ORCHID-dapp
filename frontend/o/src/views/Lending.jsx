@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useWalletStore } from '../store/wallet';
 import { useLendingStore, FD_APY, BORROW_BASE_APY, calcSupplyApy, CREDIT_GATE, calcRepayAmount, calcFdPayout } from '../store/lending';
+import { useToast } from '../components/Toast';
 
 const MS_PER_DAY = 86_400_000;
 const TERM_LABELS = { 30:'30 Days', 90:'90 Days', 180:'6 Months', 365:'1 Year', 1095:'3 Years', 1825:'5 Years' };
@@ -22,6 +23,7 @@ function daysLateNow(iso) {
 export default function Lending() {
   const { supplyLendingPool, withdrawSupply, depositCollateral, borrowFunds, createFixedDeposit, repayLoan, address } = useWalletStore();
   const { loans, deposits, fixedDeposits, creditScore, poolBalance, poolUtilization, fetchPoolBalance, tickPenalties, claimFd } = useLendingStore();
+  const toast = useToast();
 
   const [tab, setTab] = useState('supply');
   const [supplyAmt, setSupplyAmt] = useState('');
@@ -89,21 +91,21 @@ export default function Lending() {
 
   const handleSupply = async (e) => {
     e.preventDefault(); setIsSupplying(true);
-    try { const h = await supplyLendingPool(supplyAmt, supplyAsset); alert(`Supplied!\nHash: ${h}`); setSupplyAmt(''); }
-    catch (err) { alert(err.message); } finally { setIsSupplying(false); }
+    try { const h = await supplyLendingPool(supplyAmt, supplyAsset); toast.txSuccess(`Supplied ${supplyAmt} XLM to pool!`, h); setSupplyAmt(''); }
+    catch (err) { toast.error(err.message); } finally { setIsSupplying(false); }
   };
 
   const handleWithdraw = async (e) => {
     e.preventDefault(); setIsWithdrawing(true);
-    try { const h = await withdrawSupply(withdrawAmt); alert(`Withdrawn!\nHash: ${h}`); setWithdrawAmt(''); }
-    catch (err) { alert(err.message); } finally { setIsWithdrawing(false); }
+    try { const h = await withdrawSupply(withdrawAmt); toast.txSuccess(`Withdrawn ${withdrawAmt} XLM + interest!`, h); setWithdrawAmt(''); }
+    catch (err) { toast.error(err.message); } finally { setIsWithdrawing(false); }
   };
 
   const handleDepositCollateral = async (e) => {
     e.preventDefault(); setIsDepositingCollateral(true);
     try {
       const h = await depositCollateral(collateralAmt);
-      alert(`Collateral deposited!\nHash: ${h}`);
+      toast.txSuccess(`${collateralAmt} XLM collateral deposited!`, h);
       setCollateralAmt('');
       // Refresh on-chain values
       const { getCollateral, getHealthFactor, getMaxBorrow } = await import('../store/pool_contract.js');
@@ -111,39 +113,41 @@ export default function Lending() {
       setOnChainCollateral(col !== null ? Number(col) / 1e7 : 0);
       setOnChainHealth(health !== null ? Number(health) / 10000 : null);
       setOnChainMaxBorrow(maxB !== null ? Number(maxB) / 1e7 : 0);
-    } catch (err) { alert(err.message); } finally { setIsDepositingCollateral(false); }
+    } catch (err) { toast.error(err.message); } finally { setIsDepositingCollateral(false); }
   };
 
   const handleBorrow = async (e) => {
     e.preventDefault(); setIsBorrowing(true);
     try {
       const id = await borrowFunds(borrowAmt, 'XLM', borrowTerm, paymentType);
-      alert(`Loan recorded! ID: ${id}\nRepay ${borrowPreview} XLM by due date.`);
+      toast.success(`Loan approved! Repay ${borrowPreview} XLM by due date.`);
       setBorrowAmt('');
-    } catch (err) { alert(err.message); } finally { setIsBorrowing(false); }
+    } catch (err) { toast.error(err.message); } finally { setIsBorrowing(false); }
   };
 
   const handleRepay = async (loanId, partial) => {
     setRepayingId(loanId);
     try {
       const r = await repayLoan(loanId, partial || undefined);
-      alert(r.isFullyRepaid ? `Fully repaid! Credit ${r.delta > 0 ? '+' : ''}${r.delta} pts\nHash: ${r.hash}` : `Partial repayment done.\nHash: ${r.hash}`);
+      r.isFullyRepaid
+        ? toast.txSuccess(`Fully repaid! Credit ${r.delta > 0 ? '+' : ''}${r.delta} pts`, r.hash)
+        : toast.txSuccess('Partial repayment recorded.', r.hash);
       setPartialAmt('');
-    } catch (err) { alert(err.message); } finally { setRepayingId(null); }
+    } catch (err) { toast.error(err.message); } finally { setRepayingId(null); }
   };
 
   const handleFd = async (e) => {
     e.preventDefault(); setIsDepositing(true);
-    try { const h = await createFixedDeposit(fdAmt, fdAsset, fdTerm, fdApy); alert(`FD locked! Payout at maturity: ${fdPayout} ${fdAsset}\nHash: ${h}`); setFdAmt(''); }
-    catch (err) { alert(err.message); } finally { setIsDepositing(false); }
+    try { const h = await createFixedDeposit(fdAmt, fdAsset, fdTerm, fdApy); toast.txSuccess(`FD locked! Payout at maturity: ${fdPayout} ${fdAsset}`, h); setFdAmt(''); }
+    catch (err) { toast.error(err.message); } finally { setIsDepositing(false); }
   };
 
   const handleClaimFd = async (fdId) => {
     const { address } = useWalletStore.getState();
     try {
       const p = await claimFd(fdId, address);
-      alert(`FD payout of ${p} XLM sent to your wallet!`);
-    } catch (err) { alert(err.message); }
+      toast.success(`FD payout of ${p} XLM sent to your wallet!`);
+    } catch (err) { toast.error(err.message); }
   };
 
   return (
@@ -458,3 +462,5 @@ export default function Lending() {
     </motion.div>
   );
 }
+
+

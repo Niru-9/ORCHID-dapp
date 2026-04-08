@@ -5,6 +5,7 @@ import { useNetworkStats } from '../store/networkStats';
 import { Canvas } from '@react-three/fiber';
 import { Globe } from '../components/Globe';
 import Sidebar from '../components/Sidebar';
+import ToastContainer from '../components/Toast';
 import { Menu, X } from 'lucide-react';
 
 export default function Layout() {
@@ -73,6 +74,7 @@ export default function Layout() {
 
         <Outlet />
       </div>
+      <ToastContainer />
     </div>
   );
 }
