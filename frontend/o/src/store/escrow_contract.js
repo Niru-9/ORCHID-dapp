@@ -13,6 +13,7 @@ import {
   Networks,
   nativeToScVal,
   Address,
+  Operation,
   xdr,
   scValToNative,
 } from '@stellar/stellar-sdk';
@@ -56,9 +57,9 @@ async function invokeContract(callerAddress, method, args) {
     networkPassphrase: NETWORK_PASS,
   })
     .addOperation(
-      xdr.Operation.invokeContractFunction({
-        contractAddress: new Address(CONTRACT_ID).toScAddress(),
-        functionName:    method,
+      Operation.invokeContractFunction({
+        contract: CONTRACT_ID,
+        function: method,
         args,
       })
     )
@@ -198,9 +199,9 @@ export async function contractGetEscrow(escrowId) {
         await rpcServer.getAccount('GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN'),
         { fee: BASE_FEE, networkPassphrase: NETWORK_PASS }
       )
-        .addOperation(xdr.Operation.invokeContractFunction({
-          contractAddress: new Address(CONTRACT_ID).toScAddress(),
-          functionName: 'get_escrow',
+        .addOperation(Operation.invokeContractFunction({
+          contract: CONTRACT_ID,
+          function: 'get_escrow',
           args: [u64Val(escrowId)],
         }))
         .setTimeout(60)

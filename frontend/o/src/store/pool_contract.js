@@ -13,6 +13,7 @@ import {
   Networks,
   nativeToScVal,
   Address,
+  Operation,
   xdr,
   scValToNative,
 } from '@stellar/stellar-sdk';
@@ -39,9 +40,9 @@ async function invoke(caller, method, args) {
 
   const account  = await rpc.getAccount(caller);
   const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NET_PASS })
-    .addOperation(xdr.Operation.invokeContractFunction({
-      contractAddress: new Address(CONTRACT_ID).toScAddress(),
-      functionName: method,
+    .addOperation(Operation.invokeContractFunction({
+      contract: CONTRACT_ID,
+      function: method,
       args,
     }))
     .setTimeout(60)
@@ -85,9 +86,10 @@ async function readOnly(method, args) {
     const DUMMY = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN';
     const account = await rpc.getAccount(DUMMY);
     const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NET_PASS })
-      .addOperation(xdr.Operation.invokeContractFunction({
-        contractAddress: new Address(CONTRACT_ID).toScAddress(),
-        functionName: method, args,
+      .addOperation(Operation.invokeContractFunction({
+        contract: CONTRACT_ID,
+        function: method,
+        args,
       }))
       .setTimeout(60)
       .build();
