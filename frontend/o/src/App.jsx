@@ -11,6 +11,7 @@ import CreditScore from './views/CreditScore';
 import Liquidation from './views/Liquidation';
 import Activity from './views/Activity';
 import Overview from './views/Overview';
+import Monitor from './views/Monitor';
 
 export default function App() {
   const { address } = useWalletStore();
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/liquidation" element={<Liquidation />} />
           <Route path="/credit-score" element={<CreditScore />} />
           <Route path="/activity"    element={<Activity />} />
+          <Route path="/monitor"     element={<Monitor />} />
 
           {/* Legacy redirects */}
           <Route path="/portfolio"            element={<Navigate to="/overview" replace />} />

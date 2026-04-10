@@ -4,7 +4,7 @@ import { useWalletStore } from '../store/wallet';
 import {
   LayoutDashboard, ShieldCheck, Landmark,
   Zap, BarChart2, Hexagon, X, LogOut,
-  Activity, BarChart, AlertTriangle, Copy, Check,
+  Activity, BarChart, AlertTriangle, Copy, Check, MonitorDot,
 } from 'lucide-react';
 
 export default function Sidebar({ onClose }) {
@@ -20,6 +20,7 @@ export default function Sidebar({ onClose }) {
     { path: '/liquidation',  label: 'Liquidation',    icon: AlertTriangle },
     { path: '/credit-score', label: 'Credit Score',   icon: BarChart2 },
     { path: '/activity',     label: 'Activity',       icon: Activity },
+    { path: '/monitor',      label: 'System Monitor', icon: MonitorDot },
   ];
 
   const shortAddress = address
