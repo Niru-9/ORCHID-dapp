@@ -91,7 +91,7 @@ export default function Dashboard() {
       {/* Header */}
       <div className="view-header">
         <div>
-          <h2 className="view-title">Cockpit</h2>
+          <h2 className="view-title">Dashboard</h2>
           <p className="view-subtitle">All metrics derived from Horizon blockchain data — no frontend calculations.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
