@@ -515,3 +515,19 @@ MIT License
 ---
 
 > Built on [Stellar](https://stellar.org) · Powered by [Soroban](https://soroban.stellar.org) · Crafted with 🌸
+
+
+## Monitoring
+
+### Uptime Monitoring (Free)
+1. Go to [uptimerobot.com](https://uptimerobot.com) — free account
+2. Add monitor → HTTP(s) → URL: `https://orchid-dapp.onrender.com/`
+3. Check interval: 5 minutes
+4. Alert email: your email
+
+This pings the backend every 5 minutes and emails you if it goes down. Also keeps the Render free tier awake (prevents cold starts).
+
+### Metrics
+- Live metrics: `https://orchid-dapp.onrender.com/api/metrics`
+- Node count: `https://orchid-dapp.onrender.com/api/users/count`
+- Recent txs: `https://orchid-dapp.onrender.com/api/transactions/recent`

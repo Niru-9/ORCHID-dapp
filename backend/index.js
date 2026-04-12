@@ -10,13 +10,73 @@ const app = express();
 // ── CORS ──────────────────────────────────────────────────────────────────────
 app.use(cors({ origin: '*', credentials: false }));
 app.use(express.json());
-app.use((req, _res, next) => {
-  console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
+
+// ── Request logging with timing ───────────────────────────────────────────────
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    const level = res.statusCode >= 500 ? 'ERROR' : res.statusCode >= 400 ? 'WARN' : 'INFO';
+    console.log(`[${level}] ${new Date().toISOString()} ${req.method} ${req.path} ${res.statusCode} ${ms}ms`);
+  });
   next();
 });
 
-// ── Health ────────────────────────────────────────────────────────────────────
+// ── Health & Monitoring ───────────────────────────────────────────────────────
 app.get('/', (_req, res) => res.json({ status: 'running', message: 'Orchid API ✅' }));
+
+// Detailed health check — used by UptimeRobot and internal monitoring
+app.get('/health', async (_req, res) => {
+  const start = Date.now();
+  const checks = {};
+
+  // Check Redis connectivity
+  try {
+    const metrics = await db.getMetrics();
+    checks.redis = { status: 'ok', total_nodes: metrics.total_nodes, total_txs: metrics.total };
+  } catch (e) {
+    checks.redis = { status: 'error', message: e.message };
+  }
+
+  // Check Stellar Horizon connectivity
+  try {
+    const r = await fetch('https://horizon-testnet.stellar.org/ledgers?limit=1&order=desc');
+    if (r.ok) {
+      const d = await r.json();
+      checks.horizon = { status: 'ok', latest_ledger: d._embedded?.records?.[0]?.sequence };
+    } else {
+      checks.horizon = { status: 'degraded', http_status: r.status };
+    }
+  } catch (e) {
+    checks.horizon = { status: 'error', message: e.message };
+  }
+
+  const allOk = Object.values(checks).every(c => c.status === 'ok');
+  const responseTime = Date.now() - start;
+
+  res.status(allOk ? 200 : 503).json({
+    status: allOk ? 'healthy' : 'degraded',
+    timestamp: new Date().toISOString(),
+    response_time_ms: responseTime,
+    version: '1.0.0',
+    network: process.env.SOROBAN_NETWORK || 'testnet',
+    checks,
+  });
+});
+
+// Metrics endpoint for monitoring dashboards
+app.get('/api/monitor', async (_req, res) => {
+  try {
+    const metrics = await db.getMetrics();
+    res.json({
+      ...metrics,
+      timestamp: new Date().toISOString(),
+      uptime_seconds: Math.floor(process.uptime()),
+      memory_mb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      node_version: process.version,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // ── USERS ─────────────────────────────────────────────────────────────────────
 app.post('/api/users/register', async (req, res) => {

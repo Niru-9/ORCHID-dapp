@@ -228,7 +228,23 @@ export default function Escrow() {
                                 ) : (
                                   <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Legacy escrow</span>
                                 )}
-                                <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }} onClick={() => disputeEscrow(tx.id)}>Dispute</button>
+                                {/* Seller can request refund via contract */}
+                                {tx.escrow_id && (
+                                  <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }}
+                                    disabled={processingId === tx.id}
+                                    onClick={async () => {
+                                      if (!window.confirm('Request a refund? The buyer will need to approve it.')) return;
+                                      setProcessingId(tx.id);
+                                      try {
+                                        const { requestEscrowRefund } = await import('../store/wallet');
+                                        await useWalletStore.getState().requestEscrowRefund(tx.id);
+                                        toast.success('Refund requested. Awaiting buyer approval.');
+                                      } catch (err) { toast.error(err.message); }
+                                      finally { setProcessingId(null); }
+                                    }}>
+                                    Request Refund
+                                  </button>
+                                )}
                               </>
                             )}
                             {tx.status === 'Delivered' && (

@@ -189,6 +189,31 @@ export async function contractAutoRelease(callerAddress, escrowId) {
 }
 
 /**
+ * escrow_count — total escrows ever created.
+ */
+export async function contractEscrowCount() {
+  if (!CONTRACT_ID) return 0;
+  try {
+    const result = await rpcServer.simulateTransaction(
+      new TransactionBuilder(
+        await rpcServer.getAccount('GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN'),
+        { fee: BASE_FEE, networkPassphrase: NETWORK_PASS }
+      )
+        .addOperation(Operation.invokeContractFunction({
+          contract: CONTRACT_ID,
+          function: 'escrow_count',
+          args: [],
+        }))
+        .setTimeout(60)
+        .build()
+    );
+    if (SorobanRpc.Api.isSimulationSuccess(result) && result.result?.retval)
+      return scValToNative(result.result.retval);
+  } catch { /* silent */ }
+  return 0;
+}
+
+/**
  * get_escrow — read state (no auth needed, uses RPC directly).
  */
 export async function contractGetEscrow(escrowId) {

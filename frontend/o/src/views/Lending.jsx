@@ -290,6 +290,34 @@ export default function Lending() {
                 {isDepositingCollateral ? 'Depositing...' : 'Add Collateral'}
               </button>
             </form>
+            {/* Withdraw collateral — only shown when user has collateral on-chain */}
+            {onChainCollateral > 0 && (
+              <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--glass-border)', display: 'flex', gap: '0.75rem', alignItems: 'flex-end' }}>
+                <div style={{ flex: 1 }}>
+                  <label className="form-label" style={{ color: '#f59e0b' }}>Withdraw Collateral (XLM)</label>
+                  <input type="number" step="0.01" min="0.01" id="withdraw-collateral-input"
+                    placeholder={`Max: ${onChainCollateral.toFixed(2)}`} className="form-input" style={{ marginTop: '0.5rem' }} />
+                </div>
+                <button className="action-btn" style={{ borderColor: 'rgba(245,158,11,0.3)', color: '#f59e0b', padding: '0.75rem 1.25rem' }}
+                  onClick={async () => {
+                    const amt = document.getElementById('withdraw-collateral-input')?.value;
+                    if (!amt || parseFloat(amt) <= 0) return;
+                    try {
+                      const { poolWithdrawCollateral } = await import('../store/pool_contract.js');
+                      const result = await poolWithdrawCollateral(address, amt);
+                      toast.txSuccess(`${amt} XLM collateral withdrawn!`, result.hash);
+                      document.getElementById('withdraw-collateral-input').value = '';
+                      const { getCollateral, getHealthFactor, getMaxBorrow } = await import('../store/pool_contract.js');
+                      const [col, health, maxB] = await Promise.all([getCollateral(address), getHealthFactor(address), getMaxBorrow(address)]);
+                      setOnChainCollateral(col !== null ? Number(col) / 1e7 : 0);
+                      setOnChainHealth(health !== null ? Number(health) / 10000 : null);
+                      setOnChainMaxBorrow(maxB !== null ? Number(maxB) / 1e7 : 0);
+                    } catch (err) { toast.error(err.message); }
+                  }}>
+                  Withdraw
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="grid-2">
