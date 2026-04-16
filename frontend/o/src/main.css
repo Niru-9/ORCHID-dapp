@@ -1,33 +1,45 @@
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
-  --bg-base: #0f0c17;
-  --bg-surface: #1a1625;
-  --bg-surface-hover: #241e35;
-  --accent-glow: #a855f7;
-  --accent-secondary: #d946ef;
-  --text-main: #f8fafc;
-  --text-muted: #b3b8c4;
-  --glass-bg: rgba(26, 22, 37, 0.6);
-  --glass-border: rgba(255, 255, 255, 0.06);
-  --glass-highlight: rgba(168, 85, 247, 0.2);
+  /* ── Core backgrounds ── */
+  --bg-base: #0b0d12;
+  --bg-surface: #12161c;
+  --bg-surface-hover: #1a2029;
 
-  /* Aliases matching new design system */
-  --bg-hover: #241e35;
-  --accent: #a855f7;
-  --accent-2: #d946ef;
+  /* ── Single accent (blue only) ── */
+  --accent: #2563eb;
+  --accent-2: #1d4ed8;
+
+  /* ── Legacy aliases (keep so old refs don't break) ── */
+  --accent-glow: #2563eb;
+  --accent-secondary: #1d4ed8;
+  --bg-hover: #1a2029;
+  --glass-bg: rgba(18, 22, 28, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-highlight: rgba(37, 99, 235, 0.15);
+
+  /* ── Text ── */
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+
+  /* ── Borders ── */
   --border: rgba(255, 255, 255, 0.06);
-  --glass: rgba(26, 22, 37, 0.6);
+
+  /* ── Misc ── */
+  --glass: rgba(18, 22, 28, 0.6);
   --radius: 0.75rem;
   --transition: 0.2s ease;
 
-  --success-bg: rgba(16, 185, 129, 0.1);
-  --success-text: #34d399;
-  --warning-bg: rgba(245, 158, 11, 0.1);
-  --warning-text: #fbbf24;
-  --info-bg: rgba(59, 130, 246, 0.1);
+  /* ── Semantic colors ── */
+  --success: #16a34a;
+  --error: #dc2626;
+  --success-bg: rgba(22, 163, 74, 0.1);
+  --success-text: #4ade80;
+  --warning-bg: rgba(202, 138, 4, 0.1);
+  --warning-text: #facc15;
+  --info-bg: rgba(37, 99, 235, 0.1);
   --info-text: #60a5fa;
-  --error-bg: rgba(239, 68, 68, 0.1);
+  --error-bg: rgba(220, 38, 38, 0.1);
   --error-text: #f87171;
 }
 
@@ -39,8 +51,7 @@
 
 body {
   font-family: 'Plus Jakarta Sans', sans-serif;
-  background: linear-gradient(180deg, #0f0c17 0%, #14111c 100%);
-  background-attachment: fixed;
+  background: var(--bg-base);
   color: var(--text-main);
   min-height: 100vh;
   overflow-x: hidden;
@@ -72,7 +83,7 @@ button {
 .sidebar {
   width: 260px;
   background: var(--bg-surface);
-  border-right: 1px solid var(--glass-border);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   padding: 1.5rem;
@@ -90,12 +101,11 @@ button {
   width: 2rem;
   height: 2rem;
   border-radius: 0.5rem;
-  background: var(--accent-glow);
+  background: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  box-shadow: 0 0 15px rgba(168, 85, 247, 0.4);
 }
 
 .sidebar-logo svg {
@@ -151,9 +161,9 @@ button {
 }
 
 .nav-item.active {
-  background: rgba(168, 85, 247, 0.1);
-  color: var(--accent-glow);
-  border-left: 3px solid var(--accent-glow);
+  background: rgba(37, 99, 235, 0.12);
+  color: #60a5fa;
+  border-left: 2px solid var(--accent);
   border-radius: 0 0.5rem 0.5rem 0;
 }
 
@@ -245,7 +255,7 @@ button {
 .main-view {
   flex: 1;
   overflow-y: auto;
-  padding: 2rem 3rem;
+  padding: 3rem;
   position: relative;
   z-index: 10;
   display: flex;
@@ -320,7 +330,7 @@ button {
 }
 
 .view-header {
-  margin-bottom: 3rem;
+  margin-bottom: 2.5rem;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -328,19 +338,19 @@ button {
 }
 
 .view-title {
-  font-size: 2.25rem;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  margin-bottom: 0.5rem;
+  font-size: 1.8rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.4rem;
   color: var(--text-main);
-  line-height: 1.15;
+  line-height: 1.2;
 }
 
 .live-feed-badge {
   font-size: 0.65rem;
   padding: 0.1rem 0.4rem;
-  border: 1px solid var(--accent-glow);
-  color: var(--accent-glow);
+  border: 1px solid var(--accent);
+  color: var(--accent);
   border-radius: 0.25rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -349,10 +359,10 @@ button {
 
 .view-subtitle {
   color: var(--text-muted);
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 400;
-  line-height: 1.8;
-  max-width: 640px;
+  line-height: 1.7;
+  max-width: 520px;
 }
 
 .header-actions {
@@ -383,34 +393,35 @@ button {
 /* Cards */
 .card {
   background: var(--bg-surface);
-  border: none;
-  border-radius: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
   padding: 2rem;
   display: flex;
   flex-direction: column;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.15s ease;
   position: relative;
   overflow: hidden;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  box-shadow: none;
 }
 
 .card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.12);
+  transform: none;
+  box-shadow: none;
 }
 
 .card-title {
   color: var(--text-main);
-  font-size: 1.1rem;
-  font-weight: 700;
+  font-size: 1rem;
+  font-weight: 600;
   letter-spacing: -0.01em;
-  margin-bottom: 0.4rem;
+  margin-bottom: 0.35rem;
 }
 .card-subtitle {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   color: var(--text-muted);
-  line-height: 1.8;
-  margin-bottom: 1.5rem;
+  line-height: 1.7;
+  margin-bottom: 1.25rem;
 }
 
 /* Balances */
@@ -493,10 +504,10 @@ button {
 /* Tables */
 .table-container {
   background: var(--bg-surface);
-  border-radius: 1rem;
-  border: none;
+  border-radius: 0.875rem;
+  border: 1px solid var(--border);
   overflow-x: auto;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: none;
 }
 
 table {
@@ -552,33 +563,34 @@ tr:hover td {
 
 /* Buttons */
 .action-btn {
-  background: var(--bg-surface);
-  border: 1px solid var(--glass-border);
-  color: var(--text-main);
-  padding: 0.7rem 1.2rem;
-  border-radius: 0.6rem;
-  font-size: 0.875rem;
-  font-weight: 600;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 0.6rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: color 0.15s ease, border-color 0.15s ease;
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
 .action-btn:hover {
-  background: var(--bg-surface-hover);
-  transform: translateY(-1px);
+  color: var(--text-main);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: none;
 }
 
 .action-btn.primary {
-  background: var(--accent-glow);
+  background: var(--accent);
   color: white;
   border: none;
 }
 
 .action-btn.primary:hover {
-  background: var(--accent-secondary);
+  background: var(--accent-2);
 }
 
 /* Forms */
@@ -599,21 +611,22 @@ tr:hover td {
 
 .form-input {
   width: 100%;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid var(--glass-border);
-  border-radius: 0.75rem;
-  padding: 1.1rem 1.25rem;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 0.625rem;
+  padding: 0.875rem 1rem;
   color: var(--text-main);
-  transition: all 0.2s ease;
-  font-size: 1rem;
+  transition: border-color 0.15s ease;
+  font-size: 0.9rem;
   line-height: 1.5;
+  box-shadow: none;
 }
 
 .form-input:focus {
   outline: none;
-  border-color: #e879f9;
-  box-shadow: 0 0 0 2px rgba(217, 70, 239, 0.2);
-  background: rgba(0, 0, 0, 0.5);
+  border-color: var(--accent);
+  box-shadow: none;
+  background: var(--bg-base);
 }
 
 .form-input.mono {
@@ -677,31 +690,30 @@ select option:hover {
 
 .submit-btn {
   width: 100%;
-  background: var(--accent-glow);
+  background: var(--accent);
   color: white;
   font-weight: 600;
-  border-radius: 0.5rem;
-  padding: 1rem;
+  border-radius: 0.625rem;
+  padding: 0.875rem 1.5rem;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
   border: none;
   cursor: pointer;
-  transition: all 0.2s ease;
-  margin-top: 1.5rem;
+  transition: background 0.15s ease;
+  margin-top: 1.25rem;
   font-size: 0.9rem;
+  box-shadow: none;
 }
 
 .submit-btn:hover:not(:disabled) {
-  background: var(--accent-secondary);
+  background: var(--accent-2);
 }
 
 .submit-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
-  box-shadow: none;
-  transform: none;
 }
 
 .submit-btn svg {
@@ -1486,172 +1498,151 @@ p, .card-subtitle, .view-subtitle, .info-strip-body, .stat-block-desc, .empty-st
 }
 .page-intro p { font-size: 0.95rem; color: var(--text-muted); line-height: 1.8; margin: 0; }
 
-/* =========================VISUAL NOISE REDUCTION========================= */
+/* =========================FINAL OVERRIDES========================= */
 
-/* Kill all text-shadow glow */
+/* Kill all glow and text-shadow */
 * { text-shadow: none !important; }
+.sidebar-logo, .pulse-dot { box-shadow: none !important; }
 
-/* Sidebar — darker, cleaner */
-.sidebar {
-  background: #0d0b14 !important;
-  border-right: 1px solid rgba(255,255,255,0.04) !important;
-}
-
-/* Sidebar logo — no glow */
-.sidebar-logo { box-shadow: none !important; }
-
-/* Nav item — tighter, cleaner active state */
+/* Sidebar */
+.sidebar { background: var(--bg-surface) !important; }
 .nav-item { padding: 0.75rem 1rem !important; }
 .nav-item.active {
-  background: rgba(168,85,247,0.12) !important;
-  border-left: 2px solid #a855f7 !important;
+  background: rgba(37, 99, 235, 0.1) !important;
+  border-left: 2px solid var(--accent) !important;
+  color: #60a5fa !important;
   border-radius: 0 0.5rem 0.5rem 0 !important;
 }
 
-/* =========================TYPOGRAPHY HIERARCHY========================= */
-
-/* Hero — readable, not aggressive */
-.hero-title {
-  font-size: clamp(2rem, 6vw, 3.5rem) !important;
-  line-height: 1.15 !important;
-  letter-spacing: -0.02em !important;
+/* Cards — flat, no shadow */
+.card, .feature-card {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+  border-radius: 0.875rem !important;
+  padding: 2rem !important;
 }
-.hero-subtitle {
-  font-size: 1.05rem !important;
-  max-width: 500px !important;
-  line-height: 1.75 !important;
+.card:hover, .feature-card:hover {
+  transform: none !important;
+  box-shadow: none !important;
+  border-color: rgba(255,255,255,0.12) !important;
 }
 
-/* Page titles — clear hierarchy */
-.view-title { font-size: 1.75rem !important; font-weight: 700 !important; }
-.view-subtitle { font-size: 0.95rem !important; max-width: 520px !important; color: var(--text-muted) !important; }
+/* Typography — max 3 sizes */
+.view-title { font-size: 1.8rem !important; font-weight: 700 !important; }
+.card-title { font-size: 1rem !important; font-weight: 600 !important; }
+.card-subtitle { font-size: 0.85rem !important; color: var(--text-muted) !important; }
+.view-subtitle { font-size: 0.9rem !important; color: var(--text-muted) !important; max-width: 520px !important; }
+.section-label { font-size: 0.68rem !important; color: var(--accent) !important; letter-spacing: 0.12em !important; }
 
-/* =========================STAT NUMBERS — LESS AGGRESSIVE========================= */
-
-/* Big Orbitron numbers toned way down */
+/* Stats — supporting, not dominant */
 .stat-block-value {
-  font-size: 1.6rem !important;
+  font-size: 1.4rem !important;
   font-family: 'Plus Jakarta Sans', sans-serif !important;
   font-weight: 700 !important;
   color: var(--text-main) !important;
 }
-.stat-block-label {
-  font-size: 0.72rem !important;
-  color: var(--text-muted) !important;
-  letter-spacing: 0.06em !important;
-}
-.stat-block-desc {
-  font-size: 0.85rem !important;
-  color: var(--text-muted) !important;
-  line-height: 1.7 !important;
-}
+.stat-block-label { font-size: 0.75rem !important; color: var(--text-muted) !important; }
+.stat-block-desc { font-size: 0.82rem !important; color: var(--text-muted) !important; line-height: 1.65 !important; }
 
-/* Landing stats strip — subtle, not dominant */
-.landing-stats { opacity: 0.75; }
+/* Info strip */
+.info-strip {
+  box-shadow: none !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 0.875rem !important;
+  margin-bottom: 2.5rem !important;
+}
+.info-strip-item {
+  background: var(--bg-surface) !important;
+  padding: 1.75rem 2rem !important;
+  border-right: 1px solid var(--border) !important;
+}
+.info-strip-item:last-child { border-right: none !important; }
+.info-strip-title { font-size: 0.72rem !important; color: var(--accent) !important; }
+.info-strip-body { font-size: 0.85rem !important; line-height: 1.7 !important; }
+
+/* Primary button — blue, one CTA */
+.submit-btn {
+  background: var(--accent) !important;
+  border-radius: 0.625rem !important;
+  font-weight: 600 !important;
+  font-size: 0.9rem !important;
+  box-shadow: none !important;
+  padding: 0.875rem 1.5rem !important;
+  margin-top: 1.25rem !important;
+}
+.submit-btn:hover:not(:disabled) { background: var(--accent-2) !important; transform: none !important; }
+
+/* Secondary buttons — quiet */
+.action-btn { opacity: 0.75; box-shadow: none !important; }
+.action-btn:hover { opacity: 1; transform: none !important; }
+
+/* Forms */
+.form-input {
+  background: var(--bg-base) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+}
+.form-input:focus { border-color: var(--accent) !important; box-shadow: none !important; }
+
+/* Tables */
+.table-container {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+}
+th { background: rgba(0,0,0,0.15) !important; font-size: 0.7rem !important; }
+td { font-size: 0.875rem !important; }
+
+/* Main layout */
+.main-view { padding: 3rem !important; }
+.view-header { margin-bottom: 2.5rem !important; }
+
+/* Landing stats — subtle */
+.landing-stats { opacity: 0.7; }
 .landing-stat-val {
-  font-size: 1.4rem !important;
+  font-size: 1.3rem !important;
   font-family: 'Plus Jakarta Sans', sans-serif !important;
   font-weight: 700 !important;
 }
 
-/* =========================CARD CLEANUP========================= */
-
-/* Cards — slightly lighter surface so they lift off background */
-.card, .feature-card {
-  background: #1e1a2e !important;
-  border: none !important;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.3) !important;
+/* Hero */
+.hero-title {
+  font-size: clamp(2rem, 5vw, 3rem) !important;
+  line-height: 1.15 !important;
+  letter-spacing: -0.02em !important;
 }
-.card:hover, .feature-card:hover {
-  transform: translateY(-2px) !important;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4) !important;
-}
+.hero-subtitle { font-size: 1rem !important; max-width: 480px !important; line-height: 1.7 !important; }
 
-/* Card title — clear, not tiny */
-.card-title { font-size: 1rem !important; font-weight: 700 !important; color: var(--text-main) !important; }
-.card-subtitle { font-size: 0.875rem !important; color: var(--text-muted) !important; margin-bottom: 1.25rem !important; line-height: 1.75 !important; }
-
-/* =========================INFO STRIP — LESS HEAVY========================= */
-
-.info-strip {
-  box-shadow: 0 2px 12px rgba(0,0,0,0.25) !important;
-  margin-bottom: 2.5rem !important;
-}
-.info-strip-item { background: #1e1a2e !important; padding: 1.75rem 2rem !important; }
-.info-strip-title { font-size: 0.72rem !important; margin-bottom: 0.6rem !important; }
-.info-strip-body { font-size: 0.875rem !important; line-height: 1.75 !important; }
-
-/* =========================MAIN LAYOUT========================= */
-
-.main-view { padding: 2.5rem 3rem !important; }
-.view-header { margin-bottom: 2.5rem !important; }
-
-/* =========================FORM CLEANUP========================= */
-
-.form-input {
-  background: #0f0c17 !important;
-  border: 1px solid rgba(255,255,255,0.08) !important;
-  border-radius: 0.75rem !important;
-}
-.form-input:focus {
-  border-color: #a855f7 !important;
-  box-shadow: 0 0 0 3px rgba(168,85,247,0.12) !important;
-  background: #0f0c17 !important;
-}
-
-/* =========================ACTION BUTTONS — PRIMARY FIRST========================= */
-
-/* Primary CTA — clear and prominent */
-.submit-btn {
-  background: #a855f7 !important;
-  border-radius: 0.75rem !important;
-  font-size: 0.95rem !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.01em !important;
-  padding: 0.9rem 1.5rem !important;
-  margin-top: 1.25rem !important;
-}
-.submit-btn:hover:not(:disabled) {
-  background: #9333ea !important;
-  transform: translateY(-1px) !important;
-}
-
-/* Secondary buttons — toned down */
-.action-btn { opacity: 0.8; }
-.action-btn:hover { opacity: 1; transform: translateY(-1px) !important; }
-
-/* =========================EMPTY STATE========================= */
-
+/* Empty states */
 .empty-state { padding: 4rem 2rem !important; }
-.empty-state-title { font-size: 1.1rem !important; font-weight: 600 !important; }
-.empty-state-desc { font-size: 0.875rem !important; color: var(--text-muted) !important; max-width: 360px !important; }
+.empty-state-title { font-size: 1rem !important; font-weight: 600 !important; }
+.empty-state-desc { font-size: 0.85rem !important; color: var(--text-muted) !important; }
 
-/* =========================TABLE CLEANUP========================= */
+/* Metric rows */
+.metric-row { border-bottom: 1px solid var(--border) !important; font-size: 0.875rem !important; }
+.metric-key { color: var(--text-muted) !important; }
+.metric-val { font-weight: 600 !important; }
 
-.table-container {
-  background: #1e1a2e !important;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.25) !important;
+/* Badges */
+.badge.success { background: rgba(22,163,74,0.1) !important; color: #4ade80 !important; border-color: rgba(22,163,74,0.2) !important; }
+.badge.warning { background: rgba(202,138,4,0.1) !important; color: #facc15 !important; border-color: rgba(202,138,4,0.2) !important; }
+.badge.info { background: rgba(37,99,235,0.1) !important; color: #60a5fa !important; border-color: rgba(37,99,235,0.2) !important; }
+
+/* Wallet info */
+.wallet-info {
+  background: var(--bg-surface-hover) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
 }
-th { background: rgba(0,0,0,0.2) !important; font-size: 0.7rem !important; }
-td { font-size: 0.875rem !important; }
 
-/* =========================SECTION LABEL========================= */
-
-.section-label {
-  font-size: 0.68rem !important;
-  letter-spacing: 0.14em !important;
-  opacity: 0.8;
-}
-
-/* =========================RESPONSIVE FIXES========================= */
-
-@media (max-width: 1024px) {
-  .main-view { padding: 1.5rem 2rem !important; }
-}
+/* Responsive */
+@media (max-width: 1024px) { .main-view { padding: 2rem !important; } }
 @media (max-width: 768px) {
   .main-view { padding: 1rem !important; }
   .view-title { font-size: 1.4rem !important; }
-  .hero-title { font-size: 2rem !important; }
+  .hero-title { font-size: 1.9rem !important; }
   .info-strip { grid-template-columns: 1fr !important; }
-  .info-strip-item { border-right: none !important; border-bottom: 1px solid rgba(255,255,255,0.04) !important; }
+  .info-strip-item { border-right: none !important; border-bottom: 1px solid var(--border) !important; }
+  .card, .feature-card { padding: 1.25rem !important; }
 }
