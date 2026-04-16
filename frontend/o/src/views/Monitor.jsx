@@ -106,105 +106,99 @@ export default function Monitor() {
     <motion.div initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}>
       <div className="view-header">
         <div>
+          <div className="section-label">Infrastructure Health</div>
           <h2 className="view-title">System Monitor</h2>
-          <p className="view-subtitle">Live health checks, uptime tracking, and system metrics.</p>
+          <p className="view-subtitle">
+            Live health checks for every layer of the Orchid stack — the backend API, Upstash Redis database, and Stellar Horizon. If any layer goes down, you'll see it here before users do. Auto-refreshes every 30 seconds.
+          </p>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:'0.75rem' }}>
           {lastCheck && <span style={{ fontSize:'0.75rem', color:'var(--text-muted)', fontFamily:'JetBrains Mono,monospace' }}>Last: {lastCheck.toLocaleTimeString()}</span>}
           <button onClick={runChecks} disabled={loading} style={{ display:'flex', alignItems:'center', gap:'0.4rem', padding:'0.5rem 1rem', borderRadius:'8px', border:'1px solid var(--glass-border)', background:'transparent', color:'var(--text-muted)', cursor:'pointer', fontSize:'0.8rem' }}>
             <RefreshCw size={14} style={{ animation:loading?'spin 1s linear infinite':'none' }} />
-            {loading ? 'Checking...' : 'Refresh'}
+            {loading ? 'Checking...' : 'Refresh Now'}
           </button>
         </div>
       </div>
 
       {/* Overall status banner */}
-      <div className="card" style={{ marginBottom:'2rem', border:`1px solid ${overallStatus==='healthy'?'rgba(16,185,129,0.3)':overallStatus==='error'?'rgba(239,68,68,0.3)':'rgba(245,158,11,0.3)'}`, background:`${overallStatus==='healthy'?'rgba(16,185,129,0.05)':overallStatus==='error'?'rgba(239,68,68,0.05)':'rgba(245,158,11,0.05)'}` }}>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+      <div className="card" style={{ marginBottom:'2.5rem', border:`1px solid ${overallStatus==='healthy'?'rgba(16,185,129,0.3)':overallStatus==='error'?'rgba(239,68,68,0.3)':'rgba(245,158,11,0.3)'}`, background:`${overallStatus==='healthy'?'rgba(16,185,129,0.05)':overallStatus==='error'?'rgba(239,68,68,0.05)':'rgba(245,158,11,0.05)'}` }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap: 'wrap', gap: '1rem' }}>
           <div style={{ display:'flex', alignItems:'center', gap:'1rem' }}>
             <div style={{ fontSize:'1.1rem', fontWeight:700 }}>Overall System Status</div>
             <StatusBadge status={overallStatus} />
           </div>
-          <div style={{ fontSize:'0.78rem', color:'var(--text-muted)' }}>Auto-refreshes every 30s</div>
+          <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: 480 }}>
+            {overallStatus === 'healthy'
+              ? 'All systems are operating normally. Backend API, Redis database, and Stellar Horizon are all responding within expected thresholds.'
+              : overallStatus === 'degraded'
+              ? 'One or more services are responding slowly or returning unexpected results. Transactions may be delayed.'
+              : 'A critical service is down. Payments and contract interactions may fail until the issue is resolved.'}
+          </p>
         </div>
       </div>
 
       {/* Service checks */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))', gap:'1rem', marginBottom:'2rem' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(300px,1fr))', gap:'1.25rem', marginBottom:'2.5rem' }}>
 
         {/* Backend API */}
-        <div className="card">
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'1rem' }}>
+        <div className="card" style={{ borderTop: '2px solid #a855f7' }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'0.75rem' }}>
             <div style={{ display:'flex', alignItems:'center', gap:'0.6rem' }}>
               <Server size={18} color="#a855f7" />
-              <span style={{ fontWeight:700 }}>Backend API</span>
+              <span style={{ fontWeight:700, fontSize: '1rem' }}>Backend API</span>
             </div>
             <StatusBadge status={health ? health.status : 'checking'} />
           </div>
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.65, marginBottom: '1rem' }}>
+            The Express.js backend running on Render. Handles wallet registration, transaction recording, metrics aggregation, and health reporting. All frontend data flows through this service.
+          </p>
           {health && (
-            <div style={{ display:'flex', flexDirection:'column', gap:'0.4rem', fontSize:'0.8rem' }}>
-              <div style={{ display:'flex', justifyContent:'space-between' }}>
-                <span style={{ color:'var(--text-muted)' }}>Response time</span>
-                <span style={{ fontWeight:600, color: health.response_time_ms < 500 ? '#10b981' : health.response_time_ms < 1500 ? '#f59e0b' : '#ef4444' }}>{health.response_time_ms}ms</span>
-              </div>
-              <div style={{ display:'flex', justifyContent:'space-between' }}>
-                <span style={{ color:'var(--text-muted)' }}>Network</span>
-                <span style={{ fontWeight:600 }}>{health.network || 'testnet'}</span>
-              </div>
-              <div style={{ display:'flex', justifyContent:'space-between' }}>
-                <span style={{ color:'var(--text-muted)' }}>Version</span>
-                <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:'0.75rem' }}>{health.version || '—'}</span>
-              </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:'0.5rem' }}>
+              <div className="metric-row"><span className="metric-key">Response time</span><span className="metric-val" style={{ color: health.response_time_ms < 500 ? '#10b981' : health.response_time_ms < 1500 ? '#f59e0b' : '#ef4444' }}>{health.response_time_ms}ms</span></div>
+              <div className="metric-row"><span className="metric-key">Network</span><span className="metric-val">{health.network || 'testnet'}</span></div>
+              <div className="metric-row" style={{ borderBottom: 'none' }}><span className="metric-key">Version</span><span className="metric-val" style={{ fontFamily:'JetBrains Mono,monospace', fontSize:'0.78rem' }}>{health.version || '—'}</span></div>
             </div>
           )}
         </div>
 
         {/* Redis */}
-        <div className="card">
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'1rem' }}>
+        <div className="card" style={{ borderTop: '2px solid #38bdf8' }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'0.75rem' }}>
             <div style={{ display:'flex', alignItems:'center', gap:'0.6rem' }}>
               <Database size={18} color="#38bdf8" />
-              <span style={{ fontWeight:700 }}>Upstash Redis</span>
+              <span style={{ fontWeight:700, fontSize: '1rem' }}>Upstash Redis</span>
             </div>
             <StatusBadge status={health?.checks?.redis?.status || 'checking'} />
           </div>
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.65, marginBottom: '1rem' }}>
+            Persistent key-value store hosted on Upstash. Stores wallet registry, transaction history, and protocol metrics. Data survives backend restarts and is accessible globally with sub-millisecond latency.
+          </p>
           {health?.checks?.redis && (
-            <div style={{ display:'flex', flexDirection:'column', gap:'0.4rem', fontSize:'0.8rem' }}>
-              <div style={{ display:'flex', justifyContent:'space-between' }}>
-                <span style={{ color:'var(--text-muted)' }}>Total nodes</span>
-                <span style={{ fontWeight:600, color:'#38bdf8' }}>{health.checks.redis.total_nodes ?? '—'}</span>
-              </div>
-              <div style={{ display:'flex', justifyContent:'space-between' }}>
-                <span style={{ color:'var(--text-muted)' }}>Total transactions</span>
-                <span style={{ fontWeight:600 }}>{health.checks.redis.total_txs ?? '—'}</span>
-              </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:'0.5rem' }}>
+              <div className="metric-row"><span className="metric-key">Registered nodes</span><span className="metric-val" style={{ color:'#38bdf8' }}>{health.checks.redis.total_nodes ?? '—'}</span></div>
+              <div className="metric-row" style={{ borderBottom: 'none' }}><span className="metric-key">Recorded transactions</span><span className="metric-val">{health.checks.redis.total_txs ?? '—'}</span></div>
             </div>
           )}
         </div>
 
         {/* Horizon */}
-        <div className="card">
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'1rem' }}>
+        <div className="card" style={{ borderTop: '2px solid #10b981' }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'0.75rem' }}>
             <div style={{ display:'flex', alignItems:'center', gap:'0.6rem' }}>
               <Globe size={18} color="#10b981" />
-              <span style={{ fontWeight:700 }}>Stellar Horizon</span>
+              <span style={{ fontWeight:700, fontSize: '1rem' }}>Stellar Horizon</span>
             </div>
             <StatusBadge status={horizon ? horizon.status : 'checking'} />
           </div>
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.65, marginBottom: '1rem' }}>
+            Stellar's public API layer for the testnet blockchain. Orchid uses Horizon to submit transactions, index operations, fetch account balances, and measure ledger settlement times.
+          </p>
           {horizon && (
-            <div style={{ display:'flex', flexDirection:'column', gap:'0.4rem', fontSize:'0.8rem' }}>
-              <div style={{ display:'flex', justifyContent:'space-between' }}>
-                <span style={{ color:'var(--text-muted)' }}>Latest ledger</span>
-                <span style={{ fontWeight:600, fontFamily:'JetBrains Mono,monospace', fontSize:'0.75rem' }}>{horizon.latest_ledger ?? '—'}</span>
-              </div>
-              <div style={{ display:'flex', justifyContent:'space-between' }}>
-                <span style={{ color:'var(--text-muted)' }}>Response time</span>
-                <span style={{ fontWeight:600, color: horizon.response_ms < 500 ? '#10b981' : '#f59e0b' }}>{horizon.response_ms}ms</span>
-              </div>
-              <div style={{ display:'flex', justifyContent:'space-between' }}>
-                <span style={{ color:'var(--text-muted)' }}>Last close</span>
-                <span style={{ color:'var(--text-muted)', fontSize:'0.72rem' }}>{horizon.closed_at ? new Date(horizon.closed_at).toLocaleTimeString() : '—'}</span>
-              </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:'0.5rem' }}>
+              <div className="metric-row"><span className="metric-key">Latest ledger</span><span className="metric-val" style={{ fontFamily:'JetBrains Mono,monospace', fontSize:'0.78rem' }}>{horizon.latest_ledger ?? '—'}</span></div>
+              <div className="metric-row"><span className="metric-key">Response time</span><span className="metric-val" style={{ color: horizon.response_ms < 500 ? '#10b981' : '#f59e0b' }}>{horizon.response_ms}ms</span></div>
+              <div className="metric-row" style={{ borderBottom: 'none' }}><span className="metric-key">Last ledger close</span><span className="metric-val" style={{ color:'var(--text-muted)', fontSize:'0.78rem' }}>{horizon.closed_at ? new Date(horizon.closed_at).toLocaleTimeString() : '—'}</span></div>
             </div>
           )}
         </div>
@@ -212,12 +206,18 @@ export default function Monitor() {
 
       {/* Runtime metrics */}
       {monitor && (
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:'1rem', marginBottom:'2rem' }}>
-          <MetricCard icon={Clock} label="Uptime" value={monitor.uptime_seconds >= 3600 ? `${Math.floor(monitor.uptime_seconds/3600)}h ${Math.floor((monitor.uptime_seconds%3600)/60)}m` : `${Math.floor(monitor.uptime_seconds/60)}m`} sub="Since last restart" color="#a855f7" />
-          <MetricCard icon={Cpu} label="Memory" value={`${monitor.memory_mb} MB`} sub="Heap used" color="#38bdf8" />
-          <MetricCard icon={Activity} label="Total Nodes" value={monitor.total_nodes ?? '—'} sub="Unique wallets" color="#10b981" />
-          <MetricCard icon={Activity} label="Total Txs" value={monitor.total ?? '—'} sub={`${monitor.successful ?? 0} success / ${monitor.failed ?? 0} failed`} color="#f59e0b" />
-          <MetricCard icon={Activity} label="Accuracy" value={monitor.accuracy ? `${parseFloat(monitor.accuracy).toFixed(1)}%` : '—'} sub="Success rate" color={parseFloat(monitor.accuracy) >= 95 ? '#10b981' : '#f59e0b'} />
+        <div style={{ marginBottom: '2.5rem' }}>
+          <div className="section-label" style={{ marginBottom: '0.75rem' }}>Runtime Metrics</div>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: '1.25rem', maxWidth: 640 }}>
+            Live server stats from the backend process. Memory usage reflects the Node.js heap. Uptime resets on each Render deployment or restart.
+          </p>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap:'1.25rem' }}>
+            <MetricCard icon={Clock} label="Uptime" value={monitor.uptime_seconds >= 3600 ? `${Math.floor(monitor.uptime_seconds/3600)}h ${Math.floor((monitor.uptime_seconds%3600)/60)}m` : `${Math.floor(monitor.uptime_seconds/60)}m`} sub="Since last restart" color="#a855f7" />
+            <MetricCard icon={Cpu} label="Memory Used" value={`${monitor.memory_mb} MB`} sub="Node.js heap" color="#38bdf8" />
+            <MetricCard icon={Activity} label="Registered Nodes" value={monitor.total_nodes ?? '—'} sub="Unique wallets in DB" color="#10b981" />
+            <MetricCard icon={Activity} label="Total Transactions" value={monitor.total ?? '—'} sub={`${monitor.successful ?? 0} ok · ${monitor.failed ?? 0} failed`} color="#f59e0b" />
+            <MetricCard icon={Activity} label="Success Rate" value={monitor.accuracy ? `${parseFloat(monitor.accuracy).toFixed(1)}%` : '—'} sub="Confirmed / total" color={parseFloat(monitor.accuracy) >= 95 ? '#10b981' : '#f59e0b'} />
+          </div>
         </div>
       )}
 

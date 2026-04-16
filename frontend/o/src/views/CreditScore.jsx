@@ -149,8 +149,13 @@ export default function CreditScore() {
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
       <div className="view-header">
-        <h2 className="view-title">Credit Score</h2>
-        <p className="view-subtitle">Real-time on-chain credit assessment. Score updates on every confirmed repayment event.</p>
+        <div>
+          <div className="section-label">On-Chain Credit Assessment</div>
+          <h2 className="view-title">Credit Score</h2>
+          <p className="view-subtitle">
+            Your credit score is calculated entirely on-chain from your repayment history, credit utilization, account age, and transaction diversity. It updates automatically on every confirmed repayment — no manual input, no human review, no way to game it.
+          </p>
+        </div>
       </div>
 
       {/* ─── Warning Notice (only visible when overdue loans exist) ─── */}
@@ -205,16 +210,24 @@ export default function CreditScore() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
         {/* Score Factors */}
         <div className="card">
-          <h3 className="card-title" style={{ marginBottom: '1.25rem' }}>Score Factors</h3>
-          {factors.map((f, i) => (
-            <div key={i} style={{ marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-main)', fontWeight: 500 }}>{f.label}</span>
+          <div className="card-title">Score Factors</div>
+          <div className="card-subtitle">These five factors determine your score. Each is weighted by its real-world importance to creditworthiness.</div>
+          {[
+            { label: 'Payment History', weight: 35, impact: latePayments.filter(l => !l.onTime).length > 0 ? 'Negative' : 'Positive', color: latePayments.filter(l => !l.onTime).length > 0 ? '#ef4444' : '#10b981', desc: 'Whether you repay loans on time. The single most important factor — one late payment deducts 5 points per day.' },
+            { label: 'Credit Utilization', weight: 30, impact: score > 640 ? 'Low' : 'High', color: score > 640 ? '#10b981' : '#f97316', desc: 'How much of your available borrowing capacity you are using. Lower utilization signals responsible credit management.' },
+            { label: 'Account History', weight: 15, impact: loans.length > 0 ? 'Established' : 'New', color: loans.length > 0 ? '#10b981' : '#f59e0b', desc: 'Length of your credit history on Orchid. Longer history with consistent repayments builds a stronger score.' },
+            { label: 'Transaction Diversity', weight: 10, impact: transactions.length > 5 ? 'Good' : 'Building', color: transactions.length > 5 ? '#10b981' : '#f59e0b', desc: 'Variety of transaction types — payments, escrow, lending. Diverse activity demonstrates broader protocol engagement.' },
+            { label: 'Delinquency Index', weight: 10, impact: latePayments.some(l => l.daysLate > 7) ? 'Flagged' : 'Clean', color: latePayments.some(l => l.daysLate > 7) ? '#ef4444' : '#10b981', desc: 'Whether you have any severely overdue payments (7+ days late). A clean record here protects your score floor.' },
+          ].map((f, i) => (
+            <div key={i} style={{ marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                <span style={{ fontSize: '0.875rem', color: 'var(--text-main)', fontWeight: 600 }}>{f.label}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '0.7rem', color: f.color, fontWeight: 600 }}>{f.impact}</span>
-                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{f.weight}%</span>
+                  <span style={{ fontSize: '0.75rem', color: f.color, fontWeight: 700 }}>{f.impact}</span>
+                  <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.06)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>{f.weight}%</span>
                 </div>
               </div>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: '0.5rem' }}>{f.desc}</p>
               <div style={{ height: '5px', background: 'rgba(255,255,255,0.07)', borderRadius: '999px', overflow: 'hidden' }}>
                 <motion.div
                   initial={{ width: 0 }}
@@ -229,23 +242,29 @@ export default function CreditScore() {
 
         {/* Score Ranges */}
         <div className="card">
-          <h3 className="card-title" style={{ marginBottom: '1rem' }}>Score Ranges</h3>
+          <div className="card-title">Score Ranges</div>
+          <div className="card-subtitle">What each score band means for your access to Orchid's lending products and the interest rates you'll receive.</div>
           {[
-            { range: '720 – 800', label: 'Excellent', color: '#10b981' },
-            { range: '640 – 719', label: 'Good', color: '#34d399' },
-            { range: '540 – 639', label: 'Fair', color: '#f59e0b' },
-            { range: '400 – 539', label: 'Poor', color: '#f97316' },
-            { range: '0 – 399', label: 'Very Poor', color: '#ef4444' },
+            { range: '720 – 800', label: 'Excellent', color: '#10b981', desc: 'Best available rates. Maximum borrowing capacity. All products unlocked.' },
+            { range: '640 – 719', label: 'Good', color: '#34d399', desc: 'Favourable terms. Most lending products available at competitive rates.' },
+            { range: '540 – 639', label: 'Fair', color: '#f59e0b', desc: 'Standard rates apply. Eligible for most products. Room to improve.' },
+            { range: '400 – 539', label: 'Poor', color: '#f97316', desc: 'Limited access. Higher interest rates. Focus on repaying existing debt.' },
+            { range: '0 – 399', label: 'Very Poor', color: '#ef4444', desc: 'Borrowing restricted. Penalty rates apply. Repay all overdue loans first.' },
           ].map((b, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.55rem 0', borderBottom: i < 4 ? '1px solid var(--glass-border)' : 'none' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: b.color }} />
-                <span style={{ fontSize: '0.8rem', color: b.color, fontWeight: 600 }}>{b.label}</span>
+            <div key={i} style={{ padding: '0.875rem 0', borderBottom: i < 4 ? '1px solid var(--glass-border)' : 'none' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: b.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.875rem', color: b.color, fontWeight: 700 }}>{b.label}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>{b.range}</span>
+                  {score >= parseInt(b.range) && score <= parseInt(b.range.split('–')[1]) && (
+                    <span style={{ fontSize: '0.65rem', background: b.color, color: 'white', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 700 }}>You</span>
+                  )}
+                </div>
               </div>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{b.range}</span>
-              {score >= parseInt(b.range) && score <= parseInt(b.range.split('–')[1]) && (
-                <span style={{ fontSize: '0.65rem', background: b.color, color: 'white', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 700 }}>You</span>
-              )}
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6, paddingLeft: '1.4rem' }}>{b.desc}</p>
             </div>
           ))}
         </div>

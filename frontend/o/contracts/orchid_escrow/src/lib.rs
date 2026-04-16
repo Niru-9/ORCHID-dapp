@@ -383,3 +383,17 @@ impl OrchidEscrow {
 // 10. Fee > payout              → assert in release_to_seller
 // 11. Reentrancy                → state updated BEFORE every token transfer
 // 12. No hidden balance         → full amount always transferred on resolution
+
+
+
+
+
+
+
+
+
+
+
+
+
+

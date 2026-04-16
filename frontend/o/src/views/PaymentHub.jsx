@@ -354,13 +354,18 @@ export default function PaymentHub() {
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
       <div className="view-header">
-        <h2 className="view-title">Payment Hub</h2>
-        <p className="view-subtitle">Unified payment execution engine — from single atomic routes to bulk enterprise disbursements.</p>
+        <div>
+          <div className="section-label">Payment Execution</div>
+          <h2 className="view-title">Send Money</h2>
+          <p className="view-subtitle">
+            Send to one person or split a payment across multiple recipients in a single transaction. Every payment settles in under 5 seconds with a fraction-of-a-cent fee.
+          </p>
+        </div>
       </div>
 
       {/* Tab Switcher */}
-      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '2rem', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '0.4rem' }}>
-        {tabs.map((tab) => {
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0', marginBottom: '2rem', border: '1px solid var(--border)', borderRadius: '0.75rem', overflow: 'hidden' }}>
+        {tabs.map((tab, i) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (
@@ -368,18 +373,20 @@ export default function PaymentHub() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               style={{
-                flex: 1, display: 'flex', alignItems: 'center', gap: '0.65rem',
-                padding: '0.75rem 1.25rem', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                background: isActive ? 'rgba(56,189,248,0.1)' : 'transparent',
-                color: isActive ? 'var(--accent-glow)' : 'var(--text-muted)',
-                transition: 'all 0.2s ease',
-                borderBottom: isActive ? '2px solid var(--accent-glow)' : '2px solid transparent',
+                display: 'flex', alignItems: 'flex-start', gap: '0.75rem',
+                padding: '1.25rem 1.5rem', border: 'none', cursor: 'pointer',
+                background: isActive ? 'rgba(168,85,247,0.08)' : 'var(--bg-surface)',
+                borderRight: i === 0 ? '1px solid var(--border)' : 'none',
+                borderBottom: isActive ? `2px solid var(--accent)` : '2px solid transparent',
+                transition: 'all 0.2s ease', textAlign: 'left',
               }}
             >
-              <Icon size={16} />
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>{tab.label}</div>
-                <div style={{ fontSize: '0.7rem', opacity: 0.7, marginTop: '1px' }}>{tab.desc}</div>
+              <div style={{ width: 36, height: 36, borderRadius: 8, background: isActive ? 'rgba(168,85,247,0.15)' : 'rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Icon size={16} color={isActive ? 'var(--accent)' : 'var(--text-muted)'} />
+              </div>
+              <div>
+                <div style={{ fontSize: '0.9rem', fontWeight: 700, color: isActive ? 'var(--text-main)' : 'var(--text-muted)', marginBottom: '0.2rem' }}>{tab.label}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>{tab.desc}</div>
               </div>
             </button>
           );

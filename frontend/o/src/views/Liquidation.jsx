@@ -71,23 +71,27 @@ export default function Liquidation() {
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
       <div className="view-header">
         <div>
+          <div className="section-label">Liquidation Engine</div>
           <h2 className="view-title">Liquidation</h2>
-          <p className="view-subtitle">Liquidate undercollateralized positions and earn a 5% bonus.</p>
+          <p className="view-subtitle">
+            When a borrower's collateral value falls below their outstanding debt, their position becomes eligible for liquidation. You step in, repay their debt, and receive their collateral plus a 5% bonus — keeping the protocol solvent and earning a reward for doing so.
+          </p>
         </div>
       </div>
 
-      {/* How it works */}
-      <div className="card" style={{ marginBottom: '2rem', background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.2)' }}>
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
-          <AlertTriangle size={20} color="#f59e0b" style={{ flexShrink: 0, marginTop: '2px' }} />
-          <div>
-            <div style={{ fontWeight: 700, color: '#f59e0b', marginBottom: '0.35rem' }}>How Liquidation Works</div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-              When a borrower's health factor drops below 1.0 (collateral value × 66% &lt; debt), their position becomes eligible for liquidation.
-              You repay their debt and receive their collateral + <strong style={{ color: '#f59e0b' }}>5% bonus</strong>.
-              This protects the protocol from bad debt.
-            </div>
-          </div>
+      {/* How it works strip */}
+      <div className="info-strip" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: '2.5rem', borderColor: 'rgba(245,158,11,0.2)' }}>
+        <div className="info-strip-item" style={{ background: 'rgba(245,158,11,0.03)' }}>
+          <div className="info-strip-title" style={{ color: '#f59e0b' }}>Health Factor Drops Below 1.0</div>
+          <p className="info-strip-body">A position becomes liquidatable when the borrower's collateral value × 66% drops below their outstanding debt. The health factor measures this ratio — below 1.0 means the protocol is at risk.</p>
+        </div>
+        <div className="info-strip-item" style={{ background: 'rgba(245,158,11,0.03)' }}>
+          <div className="info-strip-title" style={{ color: '#f59e0b' }}>You Repay the Debt</div>
+          <p className="info-strip-body">As a liquidator, you repay the borrower's outstanding loan on their behalf. This is executed atomically via the Orchid Pool smart contract — one transaction, no partial fills.</p>
+        </div>
+        <div className="info-strip-item" style={{ background: 'rgba(245,158,11,0.03)' }}>
+          <div className="info-strip-title" style={{ color: '#f59e0b' }}>You Earn a 5% Bonus</div>
+          <p className="info-strip-body">In return, you receive the borrower's full collateral plus a 5% liquidation bonus. This is your profit for keeping the protocol free of bad debt. The more positions you liquidate, the more you earn.</p>
         </div>
       </div>
 
@@ -172,11 +176,11 @@ export default function Liquidation() {
           </div>
         </div>
       ) : (
-        <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
-          <Zap size={40} color="var(--text-muted)" style={{ margin: '0 auto 1rem' }} />
-          <div style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.5rem' }}>No positions loaded</div>
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            Enter a borrower address above to check if their position is eligible for liquidation.
+        <div className="card">
+          <div className="empty-state">
+            <Zap size={40} color="var(--text-muted)" />
+            <div className="empty-state-title">No positions loaded</div>
+            <div className="empty-state-desc">Enter a borrower wallet address above to check if their position is eligible for liquidation. Positions with a health factor below 1.0 can be liquidated.</div>
           </div>
         </div>
       )}

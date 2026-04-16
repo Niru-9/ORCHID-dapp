@@ -132,11 +132,20 @@ function NetworkLive() {
 
   return (
     <div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        {[['Total',stats.total,'var(--text-main)'],['Success',stats.success,'#10b981'],['Failed',stats.failed,'#ef4444'],['Pending',stats.pending,'#f59e0b']].map(([l,v,c],i)=>(
-          <div key={i} className="card" style={{ padding:'0.75rem', textAlign:'center' }}>
-            <div style={{ fontSize:'0.65rem', color:'var(--text-muted)', textTransform:'uppercase', fontWeight:600 }}>{l}</div>
-            <div style={{ fontSize:'1.4rem', fontWeight:800, fontFamily:'Orbitron,sans-serif', color:c, marginTop:'0.2rem' }}>{v}</div>
+      <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: '1.5rem', maxWidth: 640 }}>
+        Transactions are indexed from Stellar Horizon every 30 seconds and deduplicated by hash. Pending transactions are ones submitted but not yet confirmed in a ledger. Click any hash to verify on Stellar Expert.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+        {[
+          ['Total Indexed', stats.total, 'var(--text-main)', 'All txs seen'],
+          ['Confirmed', stats.success, '#10b981', 'Settled on-chain'],
+          ['Failed', stats.failed, '#ef4444', 'Rejected by network'],
+          ['Pending', stats.pending, '#f59e0b', 'Awaiting confirmation'],
+        ].map(([l,v,c,d],i)=>(
+          <div key={i} className="card" style={{ borderTop: `2px solid ${c}` }}>
+            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.06em' }}>{l}</div>
+            <div style={{ fontSize: '1.75rem', fontWeight: 800, fontFamily: 'Orbitron,sans-serif', color: c, marginTop: '0.35rem', lineHeight: 1 }}>{v}</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>{d}</div>
           </div>
         ))}
       </div>
@@ -180,14 +189,23 @@ export default function Activity() {
     <motion.div initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}>
       <div className="view-header">
         <div>
+          <div className="section-label">Transaction History</div>
           <h2 className="view-title">Activity</h2>
-          <p className="view-subtitle">Your transaction history and live network activity in one place.</p>
+          <p className="view-subtitle">
+            Your complete on-chain transaction history pulled directly from Stellar Horizon — every payment, contract call, and escrow action your wallet has ever signed. Switch to Network Live to see all Orchid transactions indexed in real time across the entire protocol.
+          </p>
         </div>
       </div>
 
-      <div style={{ display:'flex', gap:'0.75rem', marginBottom:'2rem', background:'rgba(255,255,255,0.03)', border:'1px solid var(--glass-border)', borderRadius:'12px', padding:'0.4rem' }}>
-        {[['mine','My History'],['network','Network Live']].map(([id,label])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{ flex:1, padding:'0.65rem 1rem', borderRadius:'8px', border:'none', cursor:'pointer', fontWeight:600, fontSize:'0.875rem', background:tab===id?'rgba(56,189,248,0.1)':'transparent', color:tab===id?'var(--accent-glow)':'var(--text-muted)', borderBottom:tab===id?'2px solid var(--accent-glow)':'2px solid transparent', transition:'all 0.2s' }}>{label}</button>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0', marginBottom: '2.5rem', border: '1px solid var(--border)', borderRadius: '1rem', overflow: 'hidden' }}>
+        {[
+          { id: 'mine', label: 'My History', desc: 'Every operation your wallet has signed on Stellar, fetched directly from Horizon. Filter by type, export to CSV, or load more history.' },
+          { id: 'network', label: 'Network Live', desc: 'All Orchid transactions indexed from Horizon in real time — payments, contract calls, escrow releases, and more. Deduplicated by transaction hash.' },
+        ].map(({ id, label, desc }, i) => (
+          <button key={id} onClick={() => setTab(id)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', padding: '1.5rem 2rem', border: 'none', cursor: 'pointer', background: tab === id ? 'rgba(56,189,248,0.06)' : 'var(--bg-surface)', borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent', borderRight: i === 0 ? '1px solid var(--border)' : 'none', transition: 'all 0.2s', textAlign: 'left' }}>
+            <span style={{ fontWeight: 700, fontSize: '1rem', color: tab === id ? 'var(--text-main)' : 'var(--text-muted)', marginBottom: '0.4rem' }}>{label}</span>
+            <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>{desc}</span>
+          </button>
         ))}
       </div>
 

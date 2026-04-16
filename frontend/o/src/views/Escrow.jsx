@@ -110,28 +110,53 @@ export default function Escrow() {
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
       <div className="view-header">
-        <h2 className="view-title">Smart Escrow Payments</h2>
-        <p className="view-subtitle">
-          Trustless on-chain escrow via Soroban smart contract. Funds locked in contract — no custody wallet.{' '}
-          <a href={`https://stellar.expert/explorer/testnet/contract/${import.meta.env.VITE_ESCROW_CONTRACT_ID}`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-glow)', fontSize: '0.75rem' }}>
-            View Contract ↗
-          </a>
-        </p>
+        <div>
+          <div className="section-label">Secure Payments</div>
+          <h2 className="view-title">Lock Funds</h2>
+          <p className="view-subtitle">
+            Lock money in a smart contract and release it only when you're satisfied. No bank, no arbitrator — just code. Perfect for freelance work, purchases, or any payment where trust matters.
+          </p>
+        </div>
+        <a href={`https://stellar.expert/explorer/testnet/contract/${import.meta.env.VITE_ESCROW_CONTRACT_ID}`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-glow)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none', border: '1px solid rgba(168,85,247,0.2)', padding: '0.5rem 1rem', borderRadius: '0.5rem', flexShrink: 0 }}>
+          View Contract ↗
+        </a>
       </div>
 
-      {/* Stats Row — Custody Holdings intentionally hidden (internal-only data) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
-        <div className="card">
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Total Contracts</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, marginTop: '0.5rem' }}>{escrowTxs.length}</div>
+      {/* How it works strip */}
+      <div className="info-strip" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: '2.5rem' }}>
+        <div className="info-strip-item">
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '0.5rem' }}>STEP 01</div>
+          <div className="info-strip-title">Lock Funds in Contract</div>
+          <p className="info-strip-body">You deposit XLM into the Soroban escrow contract. The funds are held on-chain — not in any wallet, not by any person. Only the contract rules can release them.</p>
         </div>
-        <div className="card">
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Funded</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, marginTop: '0.5rem', color: '#38bdf8' }}>{escrowTxs.filter(t => t.status === 'Funded').length}</div>
+        <div className="info-strip-item">
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '0.5rem' }}>STEP 02</div>
+          <div className="info-strip-title">Confirm Delivery</div>
+          <p className="info-strip-body">Once the seller delivers what was agreed, you mark it complete. The contract instantly releases the full payment to the seller's wallet — no delays, no disputes.</p>
         </div>
-        <div className="card">
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Awaiting Release</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, marginTop: '0.5rem', color: '#eab308' }}>{escrowTxs.filter(t => t.status === 'Delivered').length}</div>
+        <div className="info-strip-item">
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '0.5rem' }}>STEP 03</div>
+          <div className="info-strip-title">Auto-Expiry Protection</div>
+          <p className="info-strip-body">Set an expiry window of 24 hours to 30 days. If no action is taken before expiry, the contract automatically refunds your wallet — you never lose access to your funds.</p>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.25rem', marginBottom: '2.5rem' }}>
+        <div className="feature-card">
+          <div className="stat-block-label">Total Contracts Created</div>
+          <div className="stat-block-value" style={{ marginTop: '0.5rem', marginBottom: '0.4rem' }}>{escrowTxs.length}</div>
+          <div className="stat-block-desc">All escrow contracts you have initiated from this wallet</div>
+        </div>
+        <div className="feature-card">
+          <div className="stat-block-label">Funded & Active</div>
+          <div className="stat-block-value" style={{ color: '#38bdf8', marginTop: '0.5rem', marginBottom: '0.4rem' }}>{escrowTxs.filter(t => t.status === 'Funded').length}</div>
+          <div className="stat-block-desc">Funds are locked in the contract, awaiting your delivery confirmation</div>
+        </div>
+        <div className="feature-card">
+          <div className="stat-block-label">Awaiting Release</div>
+          <div className="stat-block-value" style={{ color: '#eab308', marginTop: '0.5rem', marginBottom: '0.4rem' }}>{escrowTxs.filter(t => t.status === 'Delivered').length}</div>
+          <div className="stat-block-desc">Delivery has been marked — payment is pending final release to seller</div>
         </div>
       </div>
 

@@ -2,25 +2,28 @@ import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useWalletStore } from '../store/wallet';
 import {
-  LayoutDashboard, ShieldCheck, Landmark,
-  Zap, BarChart2, Hexagon, X, LogOut,
-  Activity, BarChart, AlertTriangle, Copy, Check, MonitorDot,
+  Home, Send, Lock, TrendingUp,
+  Hexagon, X, LogOut, Copy, Check,
+  BarChart2, MonitorDot, Activity,
 } from 'lucide-react';
 
 export default function Sidebar({ onClose }) {
   const { address, balance, disconnect } = useWalletStore();
   const [copied, setCopied] = useState(false);
 
-  const navItems = [
-    { path: '/dashboard',    label: 'Dashboard',      icon: LayoutDashboard },
-    { path: '/overview',     label: 'Overview',       icon: BarChart },
-    { path: '/payment-hub',  label: 'Payment Hub',    icon: Zap },
-    { path: '/escrow',       label: 'Smart Escrow',   icon: ShieldCheck },
-    { path: '/lending',      label: 'DeFi Lending',   icon: Landmark },
-    { path: '/liquidation',  label: 'Liquidation',    icon: AlertTriangle },
-    { path: '/credit-score', label: 'Credit Score',   icon: BarChart2 },
-    { path: '/activity',     label: 'Activity',       icon: Activity },
-    { path: '/monitor',      label: 'System Monitor', icon: MonitorDot },
+  // Primary — what users actually do
+  const primaryNav = [
+    { path: '/dashboard',   label: 'Home',         icon: Home },
+    { path: '/payment-hub', label: 'Send Money',   icon: Send },
+    { path: '/escrow',      label: 'Lock Funds',   icon: Lock },
+    { path: '/lending',     label: 'Earn Yield',   icon: TrendingUp },
+  ];
+
+  // Secondary — analytics & tools
+  const secondaryNav = [
+    { path: '/overview',     label: 'Analytics',      icon: BarChart2 },
+    { path: '/activity',     label: 'Transactions',   icon: Activity },
+    { path: '/monitor',      label: 'System Status',  icon: MonitorDot },
   ];
 
   const shortAddress = address
@@ -34,74 +37,85 @@ export default function Sidebar({ onClose }) {
     setTimeout(() => setCopied(false), 1500);
   };
 
+  const NavItem = ({ item }) => (
+    <NavLink
+      to={item.path}
+      onClick={onClose}
+      className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+    >
+      <item.icon size={17} />
+      {item.label}
+    </NavLink>
+  );
+
   return (
     <aside className="sidebar">
-      {/* Header */}
+      {/* Logo */}
       <div className="sidebar-header">
-        <div className="sidebar-logo"><Hexagon size={18} /></div>
+        <div className="sidebar-logo"><Hexagon size={16} /></div>
         <h1 className="sidebar-title">ORCHID</h1>
         <button onClick={onClose} className="sidebar-close-btn" aria-label="Close menu">
           <X size={20} />
         </button>
       </div>
 
-      {/* Nav */}
-      <nav className="nav-menu">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            onClick={onClose}
-            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+      {/* Balance pill — most important thing */}
+      {address && (
+        <div style={{
+          margin: '0 0 1.5rem 0',
+          padding: '1rem 1.25rem',
+          background: 'rgba(168,85,247,0.08)',
+          borderRadius: '0.875rem',
+          border: '1px solid rgba(168,85,247,0.15)',
+        }}>
+          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.3rem' }}>
+            Your Balance
+          </div>
+          <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-main)', lineHeight: 1 }}>
+            {balance ? `${parseFloat(balance).toFixed(2)}` : '0.00'}
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginLeft: '0.35rem', fontWeight: 500 }}>XLM</span>
+          </div>
+          <button
+            onClick={copyAddress}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.35rem',
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: 0, marginTop: '0.5rem',
+            }}
+            title="Copy wallet address"
           >
-            <item.icon size={18} />
-            {item.label}
-          </NavLink>
-        ))}
+            <span style={{ fontSize: '0.72rem', fontFamily: 'JetBrains Mono, monospace', color: 'var(--text-muted)' }}>
+              {shortAddress}
+            </span>
+            {copied
+              ? <Check size={11} color="#10b981" />
+              : <Copy size={11} color="var(--text-muted)" />
+            }
+          </button>
+        </div>
+      )}
+
+      {/* Primary nav */}
+      <nav className="nav-menu">
+        {primaryNav.map(item => <NavItem key={item.path} item={item} />)}
+
+        {/* Divider */}
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '0.75rem 0' }} />
+        <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', padding: '0 1rem', marginBottom: '0.25rem', fontWeight: 700 }}>
+          Analytics
+        </div>
+
+        {secondaryNav.map(item => <NavItem key={item.path} item={item} />)}
       </nav>
 
-      {/* Footer */}
+      {/* Disconnect */}
       <div className="sidebar-footer">
-        {address && (
-          <div style={{
-            padding: '0.75rem 1rem',
-            background: 'rgba(168,85,247,0.06)',
-            borderRadius: '0.75rem',
-            border: '1px solid rgba(168,85,247,0.12)',
-          }}>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.35rem' }}>
-              Connected
-            </div>
-            {/* Copyable address */}
-            <button
-              onClick={copyAddress}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '0.4rem',
-                background: 'none', border: 'none', cursor: 'pointer',
-                padding: 0, width: '100%',
-              }}
-              title="Click to copy full address"
-            >
-              <span style={{ fontSize: '0.8rem', fontFamily: 'JetBrains Mono, monospace', color: 'var(--accent-glow)' }}>
-                {shortAddress}
-              </span>
-              {copied
-                ? <Check size={12} color="#10b981" />
-                : <Copy size={12} color="var(--text-muted)" />
-              }
-            </button>
-            <div style={{ fontSize: '0.85rem', fontWeight: 600, marginTop: '0.35rem', color: 'var(--text-main)' }}>
-              {balance ? `${parseFloat(balance).toFixed(2)} XLM` : '0 XLM'}
-            </div>
-          </div>
-        )}
-
         <button
           className="nav-item"
-          style={{ color: 'var(--error-text)', marginTop: '0.25rem' }}
+          style={{ color: 'var(--error-text)' }}
           onClick={() => { disconnect(); onClose?.(); }}
         >
-          <LogOut size={18} />
+          <LogOut size={17} />
           Disconnect
         </button>
       </div>

@@ -153,21 +153,46 @@ export default function Lending() {
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
       <div className="view-header">
-        <h2 className="view-title">DeFi Lending & Yield</h2>
-        <p className="view-subtitle">Decentralized liquidity pool — supply to earn, borrow against your credit score.</p>
+        <div>
+          <div className="section-label">Earn & Borrow</div>
+          <h2 className="view-title">Earn Yield</h2>
+          <p className="view-subtitle">
+            Deposit XLM and earn interest. Borrow against what you own. Lock in a fixed rate for guaranteed returns. Your money works for you — all on-chain, no middlemen.
+          </p>
+        </div>
+        <a href={`https://stellar.expert/explorer/testnet/contract/${import.meta.env.VITE_POOL_CONTRACT_ID}`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-glow)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none', border: '1px solid rgba(168,85,247,0.2)', padding: '0.5rem 1rem', borderRadius: '0.5rem', flexShrink: 0 }}>
+          View Contract ↗
+        </a>
+      </div>
+
+      {/* Product strip */}
+      <div className="info-strip" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: '2.5rem' }}>
+        <div className="info-strip-item">
+          <div className="info-strip-title" style={{ color: '#38bdf8' }}>Provide Liquidity</div>
+          <p className="info-strip-body">Supply XLM to the pool and earn {supplyApy}% APY. Your share grows with every borrow. The rate rises automatically as utilization increases — more demand means more yield for you. Withdraw anytime.</p>
+        </div>
+        <div className="info-strip-item">
+          <div className="info-strip-title" style={{ color: '#a855f7' }}>Borrow Against Collateral</div>
+          <p className="info-strip-body">Deposit XLM as collateral and borrow up to 80% of its value. Your interest rate is determined by your on-chain credit score and the loan term you choose. Repay on time to improve your score and unlock lower rates.</p>
+        </div>
+        <div className="info-strip-item">
+          <div className="info-strip-title" style={{ color: '#22c55e' }}>Fixed Deposits</div>
+          <p className="info-strip-body">Lock funds for a fixed term and earn up to 15% APY. Unlike variable supply, your rate is guaranteed at the time of deposit. Principal plus interest is released automatically when the term matures.</p>
+        </div>
       </div>
 
       {/* Pool Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
         {[
-          { label: 'Pool Liquidity', value: poolBalance > 0 ? `${poolBalance.toLocaleString(undefined,{maximumFractionDigits:2})} XLM` : 'Loading...', color: '#eab308' },
-          { label: 'Pool Utilization', value: `${poolUtilization}%`, color: poolUtilization >= 80 ? '#ef4444' : poolUtilization >= 50 ? '#eab308' : '#10b981' },
-          { label: 'Supply APY', value: `${supplyApy}%`, color: '#38bdf8' },
-          { label: 'Credit Score', value: creditScore, color: scoreColor },
+          { label: 'Pool Liquidity', value: poolBalance > 0 ? `${poolBalance.toLocaleString(undefined,{maximumFractionDigits:2})} XLM` : 'Loading...', color: '#eab308', sub: 'Total XLM available to borrow' },
+          { label: 'Pool Utilization', value: `${poolUtilization}%`, color: poolUtilization >= 80 ? '#ef4444' : poolUtilization >= 50 ? '#eab308' : '#10b981', sub: poolUtilization >= 80 ? 'High — rates rising' : 'Healthy utilization' },
+          { label: 'Supply APY', value: `${supplyApy}%`, color: '#38bdf8', sub: 'Dynamic — rises with utilization' },
+          { label: 'Your Credit Score', value: creditScore, color: scoreColor, sub: creditScore >= 400 ? 'Borrowing enabled' : 'Below minimum (400)' },
         ].map((s, i) => (
           <div key={i} className="card" style={{ padding: '1rem' }}>
             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>{s.label}</div>
             <div style={{ fontSize: '1.5rem', fontWeight: 700, marginTop: '0.35rem', color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{s.sub}</div>
           </div>
         ))}
       </div>
@@ -196,8 +221,10 @@ export default function Lending() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
           <div className="grid-2">
             <div className="card">
-              <h3 className="card-title">Supply to Pool</h3>
-              <p style={{ fontSize: '0.875rem', marginBottom: '1.5rem', color: 'var(--text-muted)' }}>Funds go directly to the protocol liquidity pool. Earn {supplyApy}% APY.</p>
+              <div className="card-title">Supply to Pool</div>
+              <div className="card-subtitle">
+                Add XLM to the shared liquidity pool. Your funds are immediately available for borrowers to draw against, and you start earning {supplyApy}% APY from the moment of deposit. The rate adjusts dynamically — when more people borrow, your yield goes up.
+              </div>
               <div style={{ padding: '1rem', background: 'rgba(56,189,248,0.05)', borderRadius: '12px', border: '1px solid rgba(56,189,248,0.1)', marginBottom: '1.5rem' }}>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Current Yield (APY)</div>
                 <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#38bdf8' }}>{supplyApy}%</div>
@@ -215,8 +242,10 @@ export default function Lending() {
             </div>
 
             <div className="card">
-              <h3 className="card-title">Withdraw Supply</h3>
-              <p style={{ fontSize: '0.875rem', marginBottom: '1.5rem', color: 'var(--text-muted)' }}>Withdraw your supplied liquidity + accrued interest from the contract.</p>
+              <div className="card-title">Withdraw Supply</div>
+              <div className="card-subtitle">
+                Withdraw your supplied XLM plus all accrued interest. The contract calculates your exact share of the pool based on how long you have been supplying and the utilization rate during that period.
+              </div>
               <form onSubmit={handleWithdraw} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
                 <div className="form-group">
                   <label className="form-label">Amount to Withdraw (XLM)</label>
@@ -322,8 +351,10 @@ export default function Lending() {
 
           <div className="grid-2">
           <div className="card">
-            <h3 className="card-title">Request Loan</h3>
-            <p style={{ fontSize: '0.875rem', marginBottom: '1rem', color: 'var(--text-muted)' }}>Rate based on credit score & term. Penalty: +1.5% per 2 days overdue, -5 credit pts/day.</p>
+            <div className="card-title">Request Loan</div>
+            <div className="card-subtitle">
+              Borrow XLM against your deposited collateral. Your rate is set by your credit score and the term you choose — better score means lower rate. If you miss a payment, interest increases by 1.5% every 2 days and your credit score drops 5 points per day until repaid.
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.5rem' }}>
               <div style={{ padding: '0.75rem', background: 'rgba(0,0,0,0.2)', borderRadius: '10px', border: `1px solid ${borrowRateColor}33` }}>
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Borrow Rate</div>
