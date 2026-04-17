@@ -37,30 +37,17 @@ export default function Landing() {
   return (
     <div style={{ overflowY: 'auto', height: '100vh', width: '100%', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
 
-      {/* ── Header ── */}
+      {/* ── Header — logo only, no nav buttons ── */}
       <header style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         padding: '1.5rem 4rem', borderBottom: '1px solid var(--border)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <div style={{ width: 32, height: 32, background: 'var(--accent)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Hexagon size={16} color="white" />
+          <div style={{ width: 32, height: 32, background: '#C9A857', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Hexagon size={16} color="#0E0E10" />
           </div>
-          <span style={{ fontFamily: 'Orbitron, sans-serif', fontWeight: 700, fontSize: '1.25rem', letterSpacing: '0.05em' }}>ORCHID</span>
-          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginLeft: '0.25rem' }}>Payment Protocol</span>
-        </div>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-          <a href="/Orchid_Whitepaper.docx" download style={{ color: 'var(--text-muted)', fontSize: '0.875rem', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <Download size={14} /> Whitepaper
-          </a>
-          <button onClick={connect} disabled={isConnecting} style={{
-            background: '#C9A857', color: '#0E0E10', border: 'none',
-            padding: '0.6rem 1.25rem', borderRadius: '8px', fontWeight: 600,
-            fontSize: '0.875rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem',
-            transition: 'background 0.2s ease',
-          }}>
-            {isConnecting ? 'Connecting…' : 'Connect Wallet'} <ArrowRight size={14} />
-          </button>
+          <span style={{ fontFamily: 'Orbitron, sans-serif', fontWeight: 700, fontSize: '1.25rem', letterSpacing: '0.05em', color: '#F5F5F5' }}>ORCHID</span>
+          <span style={{ fontSize: '0.7rem', color: '#71717A', textTransform: 'uppercase', letterSpacing: '0.1em', marginLeft: '0.25rem' }}>Payment Protocol</span>
         </div>
       </header>
 
@@ -111,6 +98,22 @@ export default function Landing() {
           >
             <Download size={16} /> Read Whitepaper
           </a>
+        </div>
+
+        {/* Reset connection — shown below CTAs */}
+        <div style={{ marginTop: '0.875rem', textAlign: 'center' }}>
+          <button
+            onClick={resetConnection}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: '#71717A', fontSize: '0.78rem', textDecoration: 'underline',
+              textUnderlineOffset: '2px', transition: 'color 0.2s ease',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.color = '#A1A1AA'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = '#71717A'; }}
+          >
+            Reset connection
+          </button>
         </div>
 
         {error && (
