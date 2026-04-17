@@ -64,33 +64,26 @@ export default function Sidebar({ onClose }) {
         <div style={{
           margin: '0 0 1.5rem 0',
           padding: '1rem 1.25rem',
-          background: 'rgba(168,85,247,0.08)',
-          borderRadius: '0.875rem',
-          border: '1px solid rgba(168,85,247,0.15)',
+          background: 'rgba(201,168,87,0.06)',
+          borderRadius: '10px',
+          border: '1px solid rgba(201,168,87,0.15)',
         }}>
-          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.3rem' }}>
+          <div style={{ fontSize: '0.68rem', color: '#71717A', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.3rem' }}>
             Your Balance
           </div>
-          <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-main)', lineHeight: 1 }}>
+          <div style={{ fontSize: '1.4rem', fontWeight: 600, color: '#F5F5F5', lineHeight: 1 }}>
             {balance ? `${parseFloat(balance).toFixed(2)}` : '0.00'}
-            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginLeft: '0.35rem', fontWeight: 500 }}>XLM</span>
+            <span style={{ fontSize: '0.82rem', color: '#71717A', marginLeft: '0.35rem', fontWeight: 400 }}>XLM</span>
           </div>
           <button
             onClick={copyAddress}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '0.35rem',
-              background: 'none', border: 'none', cursor: 'pointer',
-              padding: 0, marginTop: '0.5rem',
-            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginTop: '0.5rem' }}
             title="Copy wallet address"
           >
-            <span style={{ fontSize: '0.72rem', fontFamily: 'JetBrains Mono, monospace', color: 'var(--text-muted)' }}>
+            <span style={{ fontSize: '0.72rem', fontFamily: 'JetBrains Mono, monospace', color: '#71717A' }}>
               {shortAddress}
             </span>
-            {copied
-              ? <Check size={11} color="#10b981" />
-              : <Copy size={11} color="var(--text-muted)" />
-            }
+            {copied ? <Check size={11} color="#22C55E" /> : <Copy size={11} color="#71717A" />}
           </button>
         </div>
       )}

@@ -54,9 +54,10 @@ export default function Landing() {
             <Download size={14} /> Whitepaper
           </a>
           <button onClick={connect} disabled={isConnecting} style={{
-            background: 'var(--accent)', color: '#fff', border: 'none',
-            padding: '0.6rem 1.25rem', borderRadius: '0.5rem', fontWeight: 600,
+            background: '#C9A857', color: '#0E0E10', border: 'none',
+            padding: '0.6rem 1.25rem', borderRadius: '8px', fontWeight: 600,
             fontSize: '0.875rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem',
+            transition: 'background 0.2s ease',
           }}>
             {isConnecting ? 'Connecting…' : 'Connect Wallet'} <ArrowRight size={14} />
           </button>
@@ -66,41 +67,49 @@ export default function Landing() {
       {/* ── Hero ── */}
       <section style={{ padding: '6rem 4rem 4rem', maxWidth: 900, margin: '0 auto', textAlign: 'center' }}>
         <div style={{
-          display: 'inline-block', background: 'rgba(168,85,247,0.1)', color: 'var(--accent)',
-          border: '1px solid rgba(168,85,247,0.2)', padding: '0.35rem 1rem',
+          display: 'inline-block', background: 'rgba(201,168,87,0.1)', color: '#C9A857',
+          border: '1px solid rgba(201,168,87,0.2)', padding: '0.35rem 1rem',
           borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.08em',
           textTransform: 'uppercase', marginBottom: '2rem',
         }}>
           ● Live on Stellar Testnet
         </div>
 
-        <h1 style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 'clamp(2.5rem, 8vw, 5rem)', fontWeight: 900, lineHeight: 1, marginBottom: '1.5rem', letterSpacing: '0.04em' }}>
-          THE FUTURE OF<br />
-          <span style={{ color: 'var(--accent)' }}>PAYMENTS</span>
+        <h1 style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 'clamp(1.9rem, 5vw, 2.75rem)', fontWeight: 600, lineHeight: 1.15, marginBottom: '1.5rem', letterSpacing: '-0.02em', color: '#F5F5F5' }}>
+          Send money globally<br />
+          <span style={{ color: '#C9A857' }}>in seconds</span>
         </h1>
 
-        <p style={{ color: 'var(--text-muted)', fontSize: '1.15rem', lineHeight: 1.7, maxWidth: 620, margin: '0 auto 1.5rem' }}>
+        <p style={{ color: '#A1A1AA', fontSize: '0.95rem', lineHeight: 1.75, maxWidth: 460, margin: '0 auto 1rem' }}>
           Orchid is a fully on-chain payment router built on Stellar Soroban. No intermediaries, no platform fees, no opaque settlement windows.
         </p>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', lineHeight: 1.7, maxWidth: 580, margin: '0 auto 3rem' }}>
-          Send cross-border payments, lock funds in smart escrow, borrow against collateral, and earn yield — all enforced by Rust smart contracts. Not a person, not a company.
+        <p style={{ color: '#71717A', fontSize: '0.875rem', lineHeight: 1.7, maxWidth: 440, margin: '0 auto 2.5rem' }}>
+          Instant settlement · Secure · On-chain
         </p>
 
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
           <button onClick={connect} disabled={isConnecting} style={{
-            background: 'var(--accent)', color: '#fff', border: 'none',
-            padding: '1rem 2.5rem', borderRadius: '0.5rem', fontWeight: 700,
-            fontSize: '1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem',
-          }}>
-            {isConnecting ? 'Connecting…' : 'Launch App'} <ArrowRight size={18} />
+            background: '#C9A857', color: '#0E0E10', border: 'none',
+            padding: '0.875rem 2rem', borderRadius: '10px', fontWeight: 600,
+            fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem',
+            transition: 'background 0.2s ease',
+          }}
+            onMouseEnter={e => { e.currentTarget.style.background = '#B8963F'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = '#C9A857'; }}
+          >
+            {isConnecting ? 'Connecting…' : 'Send Money'} <ArrowRight size={16} />
           </button>
           <a href="/Orchid_Whitepaper.docx" download style={{
-            background: 'transparent', color: 'var(--text-main)',
-            border: '1px solid var(--border)', padding: '1rem 2rem',
-            borderRadius: '0.5rem', fontWeight: 600, fontSize: '1rem',
+            background: 'transparent', color: '#A1A1AA',
+            border: '1px solid #27272A', padding: '0.875rem 1.5rem',
+            borderRadius: '10px', fontWeight: 500, fontSize: '0.9rem',
             cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', textDecoration: 'none',
-          }}>
-            <Download size={18} /> Read Whitepaper
+            transition: 'border-color 0.2s ease, color 0.2s ease',
+          }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'; e.currentTarget.style.color = '#F5F5F5'; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = '#27272A'; e.currentTarget.style.color = '#A1A1AA'; }}
+          >
+            <Download size={16} /> Read Whitepaper
           </a>
         </div>
 

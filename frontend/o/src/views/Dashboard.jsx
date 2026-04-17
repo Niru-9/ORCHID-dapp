@@ -65,53 +65,35 @@ export default function Dashboard() {
       </div>
 
       {/* ── 3 Primary Actions ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '2.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '2rem' }}>
         {[
-          {
-            icon: Send, color: '#a855f7',
-            title: 'Send Money',
-            desc: 'Send XLM to anyone, anywhere. Settles in under 5 seconds.',
-            cta: 'Send now',
-            path: '/payment-hub',
-          },
-          {
-            icon: Lock, color: '#38bdf8',
-            title: 'Lock Funds',
-            desc: 'Secure a payment in escrow. Released only when you confirm delivery.',
-            cta: 'Create escrow',
-            path: '/escrow',
-          },
-          {
-            icon: TrendingUp, color: '#10b981',
-            title: 'Earn Yield',
-            desc: `Deposit XLM and earn interest. Fixed deposits up to 15% APY.`,
-            cta: 'Start earning',
-            path: '/lending',
-          },
+          { icon: Send,       title: 'Send Money',  desc: 'Send XLM to anyone, anywhere. Settles in seconds.',             cta: 'Send now',      path: '/payment-hub' },
+          { icon: Lock,       title: 'Lock Funds',  desc: 'Secure a payment in escrow. Released only when you confirm.',   cta: 'Lock funds',    path: '/escrow' },
+          { icon: TrendingUp, title: 'Earn Yield',  desc: 'Deposit XLM and earn interest. Fixed deposits up to 15% APY.', cta: 'Start earning', path: '/lending' },
         ].map((a, i) => (
           <button
             key={i}
             onClick={() => navigate(a.path)}
             style={{
-              background: '#1e1a2e',
-              border: 'none',
-              borderRadius: '1rem',
-              padding: '1.5rem',
+              background: '#1C1C1F',
+              border: '1px solid #27272A',
+              borderRadius: '14px',
+              padding: '20px',
               cursor: 'pointer',
               textAlign: 'left',
-              transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-              boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+              transition: 'border-color 0.2s ease',
+              width: '100%',
             }}
-            onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.4)'; }}
-            onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 2px 12px rgba(0,0,0,0.3)'; }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(201,168,87,0.3)'; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = '#27272A'; }}
           >
-            <div style={{ width: 40, height: 40, borderRadius: 10, background: `${a.color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1rem' }}>
-              <a.icon size={18} color={a.color} />
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(201,168,87,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '0.875rem' }}>
+              <a.icon size={16} color="#C9A857" />
             </div>
-            <div style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-main)', marginBottom: '0.4rem' }}>{a.title}</div>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.65, marginBottom: '1rem' }}>{a.desc}</p>
-            <div style={{ fontSize: '0.82rem', color: a.color, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              {a.cta} <ArrowRight size={13} />
+            <div style={{ fontWeight: 600, fontSize: '0.95rem', color: '#F5F5F5', marginBottom: '0.35rem' }}>{a.title}</div>
+            <p style={{ fontSize: '0.82rem', color: '#A1A1AA', lineHeight: 1.65, marginBottom: '0.875rem' }}>{a.desc}</p>
+            <div style={{ fontSize: '0.8rem', color: '#C9A857', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              {a.cta} <ArrowRight size={12} />
             </div>
           </button>
         ))}
@@ -121,9 +103,9 @@ export default function Dashboard() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr', gap: '1.25rem', marginBottom: '2.5rem' }}>
 
         {/* Quick Send */}
-        <div style={{ background: '#1e1a2e', borderRadius: '1rem', padding: '1.75rem', boxShadow: '0 2px 12px rgba(0,0,0,0.3)' }}>
-          <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: '0.35rem' }}>Quick Send</div>
-          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.65, marginBottom: '1.5rem' }}>
+        <div style={{ background: '#1C1C1F', border: '1px solid #27272A', borderRadius: '14px', padding: '20px', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+          <div style={{ fontWeight: 600, fontSize: '1rem', color: '#F5F5F5', marginBottom: '0.35rem' }}>Quick Send</div>
+          <p style={{ fontSize: '0.82rem', color: '#A1A1AA', lineHeight: 1.65, marginBottom: '1.5rem' }}>
             Send XLM directly to any Stellar wallet address.
           </p>
           <form onSubmit={handleSend} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -190,7 +172,7 @@ export default function Dashboard() {
         </div>
 
         {/* Recent Payments */}
-        <div style={{ background: '#1e1a2e', borderRadius: '1rem', padding: '1.75rem', boxShadow: '0 2px 12px rgba(0,0,0,0.3)' }}>
+        <div style={{ background: '#1C1C1F', border: '1px solid #27272A', borderRadius: '14px', padding: '20px', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
             <div style={{ fontWeight: 700, fontSize: '1rem' }}>Recent Payments</div>
             <button
@@ -265,7 +247,7 @@ export default function Dashboard() {
 
         {/* Credit score */}
         <div
-          style={{ background: '#1e1a2e', borderRadius: '1rem', padding: '1.75rem', boxShadow: '0 2px 12px rgba(0,0,0,0.3)', cursor: 'pointer' }}
+          style={{ background: '#1C1C1F', border: '1px solid #27272A', borderRadius: '14px', padding: '20px', boxShadow: '0 4px 20px rgba(0,0,0,0.3)', cursor: 'pointer' }}
           onClick={() => navigate('/credit-score')}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
@@ -296,7 +278,7 @@ export default function Dashboard() {
 
         {/* Earn teaser */}
         <div
-          style={{ background: '#1e1a2e', borderRadius: '1rem', padding: '1.75rem', boxShadow: '0 2px 12px rgba(0,0,0,0.3)', cursor: 'pointer' }}
+          style={{ background: '#1C1C1F', border: '1px solid #27272A', borderRadius: '14px', padding: '20px', boxShadow: '0 4px 20px rgba(0,0,0,0.3)', cursor: 'pointer' }}
           onClick={() => navigate('/lending')}
         >
           <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: '0.25rem' }}>Earn on your XLM</div>
@@ -305,16 +287,16 @@ export default function Dashboard() {
           </p>
           <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem' }}>
             {[
-              { label: 'Variable APY', value: 'Up to 8%', color: '#38bdf8' },
-              { label: 'Fixed Deposit', value: 'Up to 15%', color: '#10b981' },
+              { label: 'Variable APY', value: 'Up to 8%',  color: '#22C55E' },
+              { label: 'Fixed Deposit', value: 'Up to 15%', color: '#22C55E' },
             ].map((r, i) => (
-              <div key={i} style={{ flex: 1, background: 'rgba(0,0,0,0.2)', borderRadius: '0.75rem', padding: '0.875rem' }}>
-                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700, marginBottom: '0.25rem' }}>{r.label}</div>
-                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: r.color }}>{r.value}</div>
+              <div key={i} style={{ flex: 1, background: 'rgba(0,0,0,0.25)', border: '1px solid #27272A', borderRadius: '8px', padding: '0.875rem' }}>
+                <div style={{ fontSize: '0.68rem', color: '#71717A', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700, marginBottom: '0.25rem' }}>{r.label}</div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 600, color: r.color }}>{r.value}</div>
               </div>
             ))}
           </div>
-          <div style={{ fontSize: '0.82rem', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+          <div style={{ fontSize: '0.82rem', color: '#C9A857', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
             Start earning <ArrowRight size={13} />
           </div>
         </div>
