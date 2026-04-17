@@ -96,7 +96,7 @@ export default function Landing() {
             onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'; e.currentTarget.style.color = '#F5F5F5'; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = '#27272A'; e.currentTarget.style.color = '#A1A1AA'; }}
           >
-            <Download size={16} /> Read Whitepaper
+            <Download size={16} /> Read Synopsis
           </a>
         </div>
 
