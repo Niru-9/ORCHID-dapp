@@ -133,7 +133,7 @@ function MyPortfolio() {
 
 // ── Network Stats Tab ─────────────────────────────────────────────────────────
 function NetworkStatsTab() {
-  const { totalVolume, nodeCount, successCount, failCount, poolBalance, escrowBalance, ledgerSettlementSec, networkStatus, networkColor, fetchBalances, fetchSettlementTime, fetchBackendMetrics } = useAnalytics();
+  const { totalVolume, nodeCount, successCount, failCount, poolBalance, escrowBalance, ledgerSettlementSec, networkStatus, networkColor, fetchBalances, fetchSettlementTime, fetchBackendMetrics, backendAccuracy } = useAnalytics();
   const { settlementTime } = useNetworkStats();
   const { loans, deposits, fixedDeposits } = useLendingStore();
   const { transactions } = useWalletStore();
@@ -145,7 +145,12 @@ function NetworkStatsTab() {
   }, [fetchBalances, fetchSettlementTime, fetchBackendMetrics]);
 
   const totalAttempted=successCount+failCount;
-  const accuracy=totalAttempted>0?((successCount/totalAttempted)*100).toFixed(1):'100.0';
+  // Use real backend accuracy — fall back to local only if backend hasn't responded
+  const accuracy = backendAccuracy !== null && backendAccuracy !== undefined
+    ? backendAccuracy.toFixed(1)
+    : totalAttempted > 0
+    ? ((successCount/totalAttempted)*100).toFixed(1)
+    : '—';
   const accuracyColor=parseFloat(accuracy)>=95?'#10b981':parseFloat(accuracy)>=80?'#f59e0b':'#ef4444';
   const settleTime=ledgerSettlementSec||settlementTime;
   const tvl=poolBalance+escrowBalance;

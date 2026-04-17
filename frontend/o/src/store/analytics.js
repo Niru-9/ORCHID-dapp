@@ -102,6 +102,9 @@ export const useAnalytics = create(
       networkColor: 'var(--text-muted)',
       nodeCount: 0,
 
+      // ── Backend accuracy (real value from Redis) ───────────────────────────
+      backendAccuracy: null, // null = not yet fetched; number = real %
+
       // ── Audit state ────────────────────────────────────────────────────────
       lastIndexedAt: null,
       isIndexing: false,
@@ -274,11 +277,19 @@ export const useAnalytics = create(
         try {
           const { api } = await import('./api.js');
           const m = await api.getMetrics();
+          const success = parseInt(m.successful) || 0;
+          const failed  = parseInt(m.failed)     || 0;
+          const total   = success + failed;
+          // Use backend-computed accuracy if available, otherwise derive it
+          const backendAccuracy = m.accuracy
+            ? parseFloat(m.accuracy)
+            : total > 0 ? (success / total) * 100 : null;
           set({
-            totalVolume:  parseFloat(m.total_volume) || 0,
-            nodeCount:    parseInt(m.total_nodes)    || 0,
-            successCount: parseInt(m.successful)     || 0,
-            failCount:    parseInt(m.failed)         || 0,
+            totalVolume:      parseFloat(m.total_volume) || 0,
+            nodeCount:        parseInt(m.total_nodes)    || 0,
+            successCount:     success,
+            failCount:        failed,
+            backendAccuracy,  // real value from Redis, null if no txs yet
           });
         } catch (e) {
           // Backend unreachable — fall back to local recompute
@@ -394,6 +405,7 @@ export const useAnalytics = create(
         avgSettlementMs: s.avgSettlementMs,
         nodeCount: s.nodeCount,
         lastIndexedAt: s.lastIndexedAt,
+        backendAccuracy: s.backendAccuracy,
       }),
     }
   )

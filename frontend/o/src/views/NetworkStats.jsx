@@ -27,7 +27,7 @@ function fmt(n) {
 }
 
 export default function NetworkStats() {
-  const { totalVolume, nodeCount, successCount, failCount, poolBalance, escrowBalance, ledgerSettlementSec, networkStatus, networkColor, fetchBalances, fetchSettlementTime, fetchBackendMetrics } = useAnalytics();
+  const { totalVolume, nodeCount, successCount, failCount, poolBalance, escrowBalance, ledgerSettlementSec, networkStatus, networkColor, fetchBalances, fetchSettlementTime, fetchBackendMetrics, backendAccuracy } = useAnalytics();
   const { loans, deposits, fixedDeposits } = useLendingStore();
   const { transactions } = useWalletStore();
 
@@ -39,7 +39,12 @@ export default function NetworkStats() {
   }, [fetchBalances, fetchSettlementTime, fetchBackendMetrics]);
 
   const totalAttempted = successCount + failCount;
-  const accuracy = totalAttempted > 0 ? ((successCount / totalAttempted) * 100).toFixed(1) : '100.0';
+  // Use real backend accuracy — fall back to local only if backend hasn't responded
+  const accuracy = backendAccuracy !== null && backendAccuracy !== undefined
+    ? backendAccuracy.toFixed(1)
+    : totalAttempted > 0
+    ? ((successCount / totalAttempted) * 100).toFixed(1)
+    : '—';
   const totalBorrowed = loans.reduce((acc, l) => acc + l.amount, 0);
   const activeBorrowed = loans.filter(l => l.status === 'Active' || l.status === 'Partial').reduce((acc, l) => acc + (l.amount - l.amountRepaid), 0);
   const totalSupplied = deposits.reduce((acc, d) => acc + d.amount, 0);

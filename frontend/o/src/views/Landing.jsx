@@ -8,7 +8,7 @@ export default function Landing() {
   const { isConnecting, error, connect, resetConnection } = useWalletStore();
 
   const { knownAddresses, nodeCount: networkNodeCount, settlementTime, networkColor, fetchSettlementTime } = useNetworkStats();
-  const { totalVolume, successCount, failCount, nodeCount: analyticsNodeCount, fetchBalances, fetchBackendMetrics } = useAnalytics();
+  const { totalVolume, successCount, failCount, nodeCount: analyticsNodeCount, fetchBalances, fetchBackendMetrics, backendAccuracy } = useAnalytics();
 
   const nodes = analyticsNodeCount || networkNodeCount || knownAddresses.length;
 
@@ -21,8 +21,13 @@ export default function Landing() {
     return () => { clearInterval(t1); clearInterval(t2); };
   }, [fetchSettlementTime, fetchBalances, fetchBackendMetrics]);
 
+  // Use backend accuracy (real Redis value) — fall back to local only if not yet fetched
   const totalAttempted = (successCount || 0) + (failCount || 0);
-  const successRate = totalAttempted > 0 ? ((successCount / totalAttempted) * 100).toFixed(1) : '100.0';
+  const successRate = backendAccuracy !== null && backendAccuracy !== undefined
+    ? backendAccuracy.toFixed(1)
+    : totalAttempted > 0
+    ? ((successCount / totalAttempted) * 100).toFixed(1)
+    : '—';
 
   const formattedVolume = totalVolume > 1_000_000_000
     ? `${(totalVolume / 1_000_000_000).toFixed(2)}B XLM`
