@@ -1664,11 +1664,12 @@ tr:hover td { background: rgba(201,168,87,0.03) !important; }
 
 /* ── Hero ── */
 .hero-title {
-  font-size: clamp(1.9rem, 5vw, 2.75rem) !important;
-  line-height: 1.15 !important;
-  letter-spacing: -0.02em !important;
+  font-size: clamp(2.25rem, 6vw, 3.5rem) !important;
+  font-family: 'Plus Jakarta Sans', sans-serif !important;
+  line-height: 1.1 !important;
+  letter-spacing: -0.03em !important;
   color: var(--text-main) !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
 }
 .hero-subtitle { font-size: 0.95rem !important; max-width: 460px !important; line-height: 1.75 !important; color: var(--text-sub) !important; }
 

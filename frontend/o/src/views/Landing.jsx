@@ -57,29 +57,62 @@ export default function Landing() {
       </header>
 
       {/* ── Hero ── */}
-      <section style={{ padding: '6rem 4rem 4rem', maxWidth: 900, margin: '0 auto', textAlign: 'center' }}>
+      <section style={{ padding: '5rem 2rem 4rem', maxWidth: 680, margin: '0 auto', textAlign: 'center' }}>
+
+        {/* Live badge */}
         <div style={{
-          display: 'inline-block', background: 'rgba(201,168,87,0.1)', color: '#C9A857',
-          border: '1px solid rgba(201,168,87,0.2)', padding: '0.35rem 1rem',
-          borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.08em',
-          textTransform: 'uppercase', marginBottom: '2rem',
+          display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+          background: 'rgba(201,168,87,0.08)', color: '#C9A857',
+          border: '1px solid rgba(201,168,87,0.2)', padding: '0.3rem 0.875rem',
+          borderRadius: 9999, fontSize: '0.68rem', fontWeight: 600, letterSpacing: '0.1em',
+          textTransform: 'uppercase', marginBottom: '2.5rem',
         }}>
-          ● Live on Stellar Testnet
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#C9A857', display: 'inline-block' }} />
+          Live on Stellar Testnet
         </div>
 
-        <h1 style={{ fontFamily: 'Orbitron, sans-serif', fontSize: 'clamp(1.9rem, 5vw, 2.75rem)', fontWeight: 600, lineHeight: 1.15, marginBottom: '1.5rem', letterSpacing: '-0.02em', color: '#F5F5F5' }}>
+        {/* Headline — Plus Jakarta Sans, not Orbitron */}
+        <h1 style={{
+          fontFamily: "'Plus Jakarta Sans', sans-serif",
+          fontSize: 'clamp(2.25rem, 6vw, 3.5rem)',
+          fontWeight: 700,
+          lineHeight: 1.1,
+          letterSpacing: '-0.03em',
+          color: '#F5F5F5',
+          marginBottom: '1.25rem',
+        }}>
           Send money globally<br />
-          <span style={{ color: '#C9A857' }}>in seconds</span>
+          <span style={{ color: '#C9A857', fontWeight: 600 }}>in seconds</span>
         </h1>
 
-        <p style={{ color: '#A1A1AA', fontSize: '0.95rem', lineHeight: 1.75, maxWidth: 460, margin: '0 auto 1rem' }}>
-          Orchid is a fully on-chain payment router built on Stellar Soroban. No intermediaries, no platform fees, no opaque settlement windows.
-        </p>
-        <p style={{ color: '#71717A', fontSize: '0.875rem', lineHeight: 1.7, maxWidth: 440, margin: '0 auto 2.5rem' }}>
-          Instant settlement · Secure · On-chain
+        {/* Subtitle — single clean paragraph, not centered-wrapped */}
+        <p style={{
+          color: '#A1A1AA',
+          fontSize: '1rem',
+          lineHeight: 1.75,
+          maxWidth: 520,
+          margin: '0 auto 0.75rem',
+          fontWeight: 400,
+        }}>
+          Orchid is a fully on-chain payment router built on Stellar Soroban.
+          No intermediaries, no platform fees, no opaque settlement windows.
         </p>
 
-        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+        {/* Trust line */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: '0.5rem', marginBottom: '2.5rem',
+        }}>
+          {['Instant settlement', 'Secure', 'On-chain'].map((t, i) => (
+            <span key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontSize: '0.8rem', color: '#71717A', fontWeight: 500 }}>{t}</span>
+              {i < 2 && <span style={{ color: '#27272A', fontSize: '0.8rem' }}>·</span>}
+            </span>
+          ))}
+        </div>
+
+        {/* CTAs */}
+        <div style={{ display: 'flex', gap: '0.875rem', justifyContent: 'center', flexWrap: 'wrap' }}>
           <button onClick={connect} disabled={isConnecting} style={{
             background: '#C9A857', color: '#0E0E10', border: 'none',
             padding: '0.875rem 2rem', borderRadius: '10px', fontWeight: 600,
@@ -105,13 +138,13 @@ export default function Landing() {
           </a>
         </div>
 
-        {/* Reset connection — shown below CTAs */}
-        <div style={{ marginTop: '0.875rem', textAlign: 'center' }}>
+        {/* Reset */}
+        <div style={{ marginTop: '1rem', textAlign: 'center' }}>
           <button
             onClick={resetConnection}
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
-              color: '#71717A', fontSize: '0.78rem', textDecoration: 'underline',
+              color: '#71717A', fontSize: '0.75rem', textDecoration: 'underline',
               textUnderlineOffset: '2px', transition: 'color 0.2s ease',
             }}
             onMouseEnter={e => { e.currentTarget.style.color = '#A1A1AA'; }}
