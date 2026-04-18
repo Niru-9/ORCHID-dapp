@@ -4,7 +4,7 @@
  * Calls the deployed Soroban lending pool contract directly.
  * All funds held by the contract — no custody wallet needed.
  *
- * Contract: CBYBYEVP6KX6E3PH6APZKX3Z2BXH3ENNIRUXQVKKS7E2M6Q2KLGKRVVX
+ * Contract: CBKY6KEKIKVQXYKWK2C3GTNT7XMT5ZJLHCYNEZCVO3RHSY7MKL3F4IPZ
  */
 
 import {
@@ -19,7 +19,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit/sdk';
 
-const RPC_URL     = 'https://soroban-testnet.stellar.org';
+const RPC_URL     = import.meta.env.VITE_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
 const CONTRACT_ID = import.meta.env.VITE_POOL_CONTRACT_ID;
 const NET_PASS    = Networks.TESTNET;
 const BASE_FEE    = '300000';

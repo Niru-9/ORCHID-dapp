@@ -261,7 +261,6 @@ export default function Escrow() {
                                       if (!window.confirm('Request a refund? The buyer will need to approve it.')) return;
                                       setProcessingId(tx.id);
                                       try {
-                                        const { requestEscrowRefund } = await import('../store/wallet');
                                         await useWalletStore.getState().requestEscrowRefund(tx.id);
                                         toast.success('Refund requested. Awaiting buyer approval.');
                                       } catch (err) { toast.error(err.message); }

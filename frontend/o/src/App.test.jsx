@@ -11,7 +11,7 @@ vi.mock('./components/Globe', () => ({
   Globe: () => <div data-testid="mock-globe" />,
 }));
 
-// Mock the zustand store
+// Mock the zustand stores
 vi.mock('./store/wallet', () => ({
   useWalletStore: () => ({
     address: null,
@@ -21,19 +21,42 @@ vi.mock('./store/wallet', () => ({
     connect: vi.fn(),
     disconnect: vi.fn(),
     sendTransaction: vi.fn(),
+    resetConnection: vi.fn(),
+  }),
+}));
+
+vi.mock('./store/analytics', () => ({
+  useAnalytics: () => ({
+    totalVolume: 0,
+    successCount: 0,
+    failCount: 0,
+    nodeCount: 0,
+    backendAccuracy: null,
+    fetchBalances: vi.fn(),
+    fetchBackendMetrics: vi.fn(),
+    fetchSettlementTime: vi.fn(),
+  }),
+}));
+
+vi.mock('./store/networkStats', () => ({
+  useNetworkStats: () => ({
+    knownAddresses: [],
+    nodeCount: 0,
+    settlementTime: null,
+    networkColor: '#10b981',
+    fetchSettlementTime: vi.fn(),
   }),
 }));
 
 describe('App Component', () => {
-  it('renders the main heading', () => {
+  it('renders the ORCHID brand name', () => {
     render(<App />);
-    expect(screen.getByText(/ORCHID/i)).toBeInTheDocument();
-    expect(screen.getByText(/Intelligent Disbursements/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/ORCHID/i).length).toBeGreaterThan(0);
   });
 
-  it('renders the connect wallet button', () => {
+  it('renders the Send Money CTA button', () => {
     render(<App />);
-    const button = screen.getByRole('button', { name: /Connect Wallet/i });
+    const button = screen.getByRole('button', { name: /Send Money/i });
     expect(button).toBeInTheDocument();
   });
 

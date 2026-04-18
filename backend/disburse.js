@@ -65,9 +65,23 @@ async function sendFromCustody(senderKeypair, recipient, amount, memo = '') {
 /**
  * Process all pending disbursements that are due now.
  * Called by the scheduler every 60 seconds.
+ * NOTE: With Soroban contracts, most payouts are handled on-chain.
+ * This is a legacy fallback for any custody-wallet disbursements.
  */
 async function processPendingDisbursements() {
-  const pending = await db.getPendingDisbursements();
+  // Guard: if no secret keys configured, skip silently (contracts handle payouts)
+  if (!process.env.POOL_SECRET_KEY && !process.env.ESCROW_SECRET_KEY) {
+    return;
+  }
+
+  let pending;
+  try {
+    pending = await db.getPendingDisbursements();
+  } catch (e) {
+    console.error('[Disburse] Failed to fetch pending disbursements:', e.message);
+    return;
+  }
+
   if (pending.length === 0) return;
 
   console.log(`[Disburse] Processing ${pending.length} pending disbursement(s)`);
@@ -79,7 +93,13 @@ async function processPendingDisbursements() {
         ? 'ESCROW_SECRET_KEY'
         : 'POOL_SECRET_KEY';
 
-      const keypair = getKeypair(keypairEnvKey);
+      let keypair;
+      try {
+        keypair = getKeypair(keypairEnvKey);
+      } catch (e) {
+        console.warn(`[Disburse] Skipping disbursement ${disb.id}: ${e.message}`);
+        continue;
+      }
 
       const memoText = {
         borrow:          'Orchid Loan',

@@ -28,7 +28,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit/sdk';
 
-const RPC_URL      = 'https://soroban-testnet.stellar.org';
+const RPC_URL      = import.meta.env.VITE_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
 const CONTRACT_ID  = import.meta.env.VITE_ESCROW_CONTRACT_ID;
 const NETWORK_PASS = Networks.TESTNET;
 const BASE_FEE     = '300000';
@@ -48,9 +48,12 @@ function i128Val(xlm) {
   return nativeToScVal(stroops, { type: 'i128' });
 }
 function optionNone() {
+  // Soroban Option::None = scvVoid
   return xdr.ScVal.scvVoid();
 }
 function optionSome(val) {
+  // Soroban Option::Some(Address) = the address ScVal directly
+  // (Soroban SDK unwraps Option automatically when the type is Option<T>)
   return val;
 }
 
@@ -200,10 +203,10 @@ export async function contractDispute(callerAddress, escrowId) {
  * decision: 'Release' (pay seller) or 'Refund' (pay buyer)
  */
 export async function contractArbitrate(arbitratorAddress, escrowId, decision) {
-  // decision is an enum: { Release: {} } or { Refund: {} }
-  const decisionVal = decision === 'Release'
-    ? xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Release')])
-    : xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Refund')]);
+  // ArbitratorDecision is a Soroban enum — encode as scvVec with symbol tag
+  const decisionVal = xdr.ScVal.scvVec([
+    xdr.ScVal.scvSymbol(decision === 'Release' ? 'Release' : 'Refund'),
+  ]);
 
   return invokeContract(arbitratorAddress, 'arbitrate', [
     u64Val(escrowId),
@@ -251,4 +254,13 @@ export async function contractEscrowCount() {
 
 export async function contractGetFeeBps() {
   return readOnly('get_fee_bps', []);
+}
+
+/**
+ * set_fee — admin only. Updates platform fee (max 500 = 5%).
+ */
+export async function contractSetFee(adminAddress, newFeeBps) {
+  return invokeContract(adminAddress, 'set_fee', [
+    xdr.ScVal.scvU32(parseInt(newFeeBps)),
+  ]);
 }

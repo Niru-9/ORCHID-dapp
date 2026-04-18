@@ -6,7 +6,6 @@ import {
   Networks as StellarNetworks,
   Asset,
   Operation,
-  Memo,
 } from '@stellar/stellar-sdk';
 import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit/sdk';
 import { Networks } from '@creit.tech/stellar-wallets-kit/types';
@@ -420,9 +419,10 @@ export const useWalletStore = create(
         const escrow = transactions.find(t => t.id === id);
         if (!escrow) throw new Error('Escrow not found');
 
-        // Buyer approves refund → contract sends back to buyer
-        const { contractApproveRefund } = await import('./escrow_contract.js');
-        const result = await contractApproveRefund(address, escrow.escrow_id);
+        // If disputed → buyer cancels via contract cancel
+        // If funded → buyer cancels before deadline
+        const { contractCancel } = await import('./escrow_contract.js');
+        const result = await contractCancel(address, escrow.escrow_id);
 
         set((s) => ({
           transactions: s.transactions.map((t) =>
@@ -433,14 +433,14 @@ export const useWalletStore = create(
         return result.hash;
       },
 
-      // Seller requests refund (dispute flow)
+      // Seller requests refund (dispute flow) — calls contract dispute
       requestEscrowRefund: async (id) => {
         const { transactions, address } = get();
         const escrow = transactions.find(t => t.id === id);
         if (!escrow) throw new Error('Escrow not found');
 
-        const { contractRequestRefund } = await import('./escrow_contract.js');
-        await contractRequestRefund(address, escrow.escrow_id);
+        const { contractDispute } = await import('./escrow_contract.js');
+        await contractDispute(address, escrow.escrow_id);
 
         set((s) => ({
           transactions: s.transactions.map((t) =>
@@ -475,7 +475,14 @@ export const useWalletStore = create(
         }));
       },
 
-      disputeEscrow: (id) => {
+      disputeEscrow: async (id) => {
+        const { transactions, address } = get();
+        const escrow = transactions.find(t => t.id === id);
+        if (!escrow) return;
+        try {
+          const { contractDispute } = await import('./escrow_contract.js');
+          await contractDispute(address, escrow.escrow_id);
+        } catch (_) { /* escrow may not have arbitrator — still update local state */ }
         set((s) => ({
           transactions: s.transactions.map((t) =>
             t.id === id ? { ...t, status: 'Disputed' } : t
@@ -587,7 +594,10 @@ export const useWalletStore = create(
         // Store the on-chain loan ID so repay can reference it
         if (loan_id !== null) {
           const { useLendingStore: ls } = await import('./lending.js');
-          ls.getState().updateLoanContractId(loan.id, loan_id);
+          const lsState = ls.getState();
+          if (typeof lsState.updateLoanContractId === 'function') {
+            lsState.updateLoanContractId(loan.id, loan_id);
+          }
         }
 
         try {

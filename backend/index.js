@@ -1,15 +1,63 @@
 if (process.env.NODE_ENV !== 'production') require('dotenv').config();
 
-const express  = require('express');
-const cors     = require('cors');
-const db       = require('./db');
+const express   = require('express');
+const cors      = require('cors');
+const rateLimit = require('express-rate-limit');
+const db        = require('./db');
 const { processPendingDisbursements } = require('./disburse');
 
 const app = express();
 
-// ── CORS ──────────────────────────────────────────────────────────────────────
-app.use(cors({ origin: '*', credentials: false }));
-app.use(express.json());
+// ── CORS — restrict to known origins ─────────────────────────────────────────
+const ALLOWED_ORIGINS = [
+  'https://orchid-dapp.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, cb) => {
+    // Allow requests with no origin (curl, Postman, server-to-server)
+    if (!origin) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    cb(new Error(`CORS: origin ${origin} not allowed`));
+  },
+  credentials: false,
+}));
+app.use(express.json({ limit: '10kb' })); // prevent large payload attacks
+
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+// General: 200 requests per 15 min per IP (covers all routes)
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+});
+
+// Strict: 30 requests per 15 min per IP (write endpoints only)
+const writeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many write requests, please slow down.' },
+});
+
+app.use(generalLimiter);
+
+// ── Input validation helpers ──────────────────────────────────────────────────
+const STELLAR_ADDR_RE = /^G[A-Z2-7]{55}$/;
+const TX_HASH_RE      = /^[a-fA-F0-9]{64}$/;
+
+function isValidStellarAddress(addr) {
+  return typeof addr === 'string' && STELLAR_ADDR_RE.test(addr);
+}
+function isValidTxHash(hash) {
+  return typeof hash === 'string' && TX_HASH_RE.test(hash);
+}
 
 // ── Request logging with timing ───────────────────────────────────────────────
 app.use((req, res, next) => {
@@ -79,10 +127,10 @@ app.get('/api/monitor', async (_req, res) => {
 });
 
 // ── USERS ─────────────────────────────────────────────────────────────────────
-app.post('/api/users/register', async (req, res) => {
+app.post('/api/users/register', writeLimiter, async (req, res) => {
   const { wallet_address } = req.body;
-  if (!wallet_address || wallet_address.length < 10)
-    return res.status(400).json({ error: 'Invalid wallet_address' });
+  if (!wallet_address || !isValidStellarAddress(wallet_address))
+    return res.status(400).json({ error: 'Invalid wallet_address — must be a valid Stellar G... address' });
   try { res.json(await db.registerWallet(wallet_address.trim())); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -98,9 +146,12 @@ app.get('/api/users/list', async (_req, res) => {
 });
 
 // ── TRANSACTIONS ──────────────────────────────────────────────────────────────
-app.post('/api/transactions/record', async (req, res) => {
+app.post('/api/transactions/record', writeLimiter, async (req, res) => {
   const { tx_hash, amount, source_account, type, success } = req.body;
-  if (!tx_hash) return res.status(400).json({ error: 'tx_hash required' });
+  if (!tx_hash || !isValidTxHash(tx_hash))
+    return res.status(400).json({ error: 'Invalid tx_hash — must be a 64-char hex string' });
+  if (source_account && !isValidStellarAddress(source_account))
+    return res.status(400).json({ error: 'Invalid source_account' });
   try { res.json(await db.recordTx({ tx_hash, amount, source_account, type, success })); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
