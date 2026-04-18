@@ -77,6 +77,14 @@ async function fetchTxVolume(txHash) {
   }
 }
 
+// ── BigInt-safe JSON serializer for Zustand persist ──────────────────────────
+const bigIntSerializer = {
+  serialize: (state) => JSON.stringify(state, (_key, val) =>
+    typeof val === 'bigint' ? val.toString() : val
+  ),
+  deserialize: (str) => JSON.parse(str),
+};
+
 export const useAnalytics = create(
   persist(
     (set, get) => ({
@@ -395,8 +403,18 @@ export const useAnalytics = create(
     }),
     {
       name: 'orchid-analytics-v1',
+      storage: {
+        getItem: (name) => {
+          const str = localStorage.getItem(name);
+          return str ? bigIntSerializer.deserialize(str) : null;
+        },
+        setItem: (name, value) => {
+          localStorage.setItem(name, bigIntSerializer.serialize(value));
+        },
+        removeItem: (name) => localStorage.removeItem(name),
+      },
       partialize: (s) => ({
-        eventLog: s.eventLog.slice(0, 500), // keep last 500 events
+        eventLog: s.eventLog.slice(0, 500),
         walletRegistry: s.walletRegistry,
         totalVolume: s.totalVolume,
         uniqueUsers: s.uniqueUsers,

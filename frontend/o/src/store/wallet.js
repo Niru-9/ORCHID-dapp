@@ -157,7 +157,13 @@ async function buildAndSign(address, buildFn, meta = {}) {
   throw lastErr || new Error('Transaction failed after retries');
 }
 
-export const useWalletStore = create(
+// ── BigInt-safe JSON serializer for Zustand persist ──────────────────────────
+const bigIntSerializer = {
+  serialize: (state) => JSON.stringify(state, (_key, val) =>
+    typeof val === 'bigint' ? val.toString() : val
+  ),
+  deserialize: (str) => JSON.parse(str),
+};
   persist(
     (set, get) => ({
       // ── State ──────────────────────────────────────────────────────────────
@@ -218,7 +224,15 @@ export const useWalletStore = create(
         try {
           const account = await server.loadAccount(address);
           const native = account.balances.find((b) => b.asset_type === 'native');
-          set({ balance: native?.balance || '0', balances: account.balances });
+          // Store only plain serializable balance data — no SDK objects
+          const safeBalances = account.balances.map(b => ({
+            asset_type: b.asset_type,
+            asset_code: b.asset_code,
+            asset_issuer: b.asset_issuer,
+            balance: b.balance,
+            limit: b.limit,
+          }));
+          set({ balance: native?.balance || '0', balances: safeBalances });
         } catch (err) {
           set({ error: 'Account not funded. Use Friendbot.' });
         }
@@ -669,6 +683,16 @@ export const useWalletStore = create(
     }),
     {
       name: 'wallet-store-v3',
+      storage: {
+        getItem: (name) => {
+          const str = localStorage.getItem(name);
+          return str ? bigIntSerializer.deserialize(str) : null;
+        },
+        setItem: (name, value) => {
+          localStorage.setItem(name, bigIntSerializer.serialize(value));
+        },
+        removeItem: (name) => localStorage.removeItem(name),
+      },
     }
   )
 );

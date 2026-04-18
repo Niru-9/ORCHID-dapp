@@ -76,6 +76,14 @@ export function creditDelta(daysLate, isEarly = false) {
 
 function clamp(val, min, max) { return Math.min(max, Math.max(min, val)); }
 
+// ── BigInt-safe JSON serializer for Zustand persist ──────────────────────────
+const bigIntSerializer = {
+  serialize: (state) => JSON.stringify(state, (_key, val) =>
+    typeof val === 'bigint' ? val.toString() : val
+  ),
+  deserialize: (str) => JSON.parse(str),
+};
+
 export const useLendingStore = create(
   persist(
     (set, get) => ({
@@ -335,6 +343,16 @@ export const useLendingStore = create(
     }),
     {
       name: 'orchid-lending-v1',
+      storage: {
+        getItem: (name) => {
+          const str = localStorage.getItem(name);
+          return str ? bigIntSerializer.deserialize(str) : null;
+        },
+        setItem: (name, value) => {
+          localStorage.setItem(name, bigIntSerializer.serialize(value));
+        },
+        removeItem: (name) => localStorage.removeItem(name),
+      },
       partialize: (s) => ({
         loans: s.loans,
         deposits: s.deposits,
