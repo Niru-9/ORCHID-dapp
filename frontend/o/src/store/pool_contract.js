@@ -22,7 +22,9 @@ import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit/sdk';
 const RPC_URL     = 'https://soroban-testnet.stellar.org';
 const CONTRACT_ID = import.meta.env.VITE_POOL_CONTRACT_ID;
 const NET_PASS    = Networks.TESTNET;
-const BASE_FEE    = '300000'; // Soroban needs higher fee
+const BASE_FEE    = '300000';
+// Dummy funded account for read-only simulations
+const DUMMY = import.meta.env.VITE_ADMIN_ADDRESS || 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN';
 
 const rpc = new SorobanRpc.Server(RPC_URL);
 
@@ -82,8 +84,6 @@ async function invoke(caller, method, args) {
 async function readOnly(method, args) {
   if (!CONTRACT_ID) return null;
   try {
-    // Use a dummy funded account for read-only simulation
-    const DUMMY = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN';
     const account = await rpc.getAccount(DUMMY);
     const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NET_PASS })
       .addOperation(Operation.invokeContractFunction({
@@ -182,9 +182,18 @@ export async function poolClaimFD(ownerAddress, fdId) {
   ]);
 }
 
+/** Early withdrawal with 10% penalty. */
+export async function poolEarlyWithdrawFD(ownerAddress, fdId) {
+  return invoke(ownerAddress, 'early_withdraw_fd', [
+    addrVal(ownerAddress),
+    u64Val(fdId),
+  ]);
+}
+
 // ── Read-only Views ───────────────────────────────────────────────────────────
 
-export async function getPoolStats()              { return readOnly('get_pool_stats', []); }
+export async function getPoolStats()              { return readOnly('get_pool_state', []); }
+export async function getPoolState()              { return readOnly('get_pool_state', []); }
 export async function getBorrowRate()             { return readOnly('get_borrow_rate', []); }
 export async function getSupplyApy()              { return readOnly('get_supply_apy', []); }
 export async function getHealthFactor(addr)       { return readOnly('get_health_factor', [addrVal(addr)]); }
@@ -194,3 +203,5 @@ export async function getCollateral(addr)         { return readOnly('get_collate
 export async function getLoan(addr, loanId)       { return readOnly('get_loan', [addrVal(addr), u64Val(loanId)]); }
 export async function getFD(addr, fdId)           { return readOnly('get_fd', [addrVal(addr), u64Val(fdId)]); }
 export async function getSupplyPosition(addr)     { return readOnly('get_supply_position', [addrVal(addr)]); }
+export async function getHealthInfo(addr)         { return readOnly('get_health_info', [addrVal(addr)]); }
+export async function getProtocolFees()           { return readOnly('get_protocol_fees', []); }

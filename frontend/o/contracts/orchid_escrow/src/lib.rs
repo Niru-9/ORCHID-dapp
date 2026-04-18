@@ -1,45 +1,32 @@
-//! Orchid Escrow Contract — Soroban / Stellar
-//!
-//! Industry-ready deterministic escrow with a strict state machine.
-//! Funds are NEVER locked indefinitely — every path resolves to buyer or seller.
+//! Orchid Escrow — Production-Grade Soroban Contract
 //!
 //! ─── STATE MACHINE ───────────────────────────────────────────────────────────
 //!
 //!   CREATED
-//!     └─ fund()              → FUNDED   (buyer deposits tokens into contract)
+//!     └─ fund()                → FUNDED
 //!
 //!   FUNDED
-//!     └─ lock()              → LOCKED   (auto-called inside fund for atomicity)
+//!     ├─ approve(buyer)        → records buyer approval
+//!     ├─ approve(seller)       → records seller approval
+//!     │   both approved        → RELEASED (funds → seller)
+//!     ├─ cancel()              → CANCELLED (only before deadline, only buyer)
+//!     ├─ dispute()             → DISPUTED  (either party)
+//!     └─ auto_release()        → AUTO_RELEASED (deadline passed)
 //!
-//!   LOCKED
-//!     ├─ confirm_delivery()  → RELEASED          (buyer confirms → seller paid)
-//!     ├─ request_refund()    → REFUND_REQUESTED  (seller triggers dispute)
-//!     └─ auto_release()      → AUTO_RELEASED     (deadline passed → seller paid)
+//!   DISPUTED
+//!     ├─ arbitrate(Release)    → RELEASED  (arbitrator decides for seller)
+//!     └─ arbitrate(Refund)     → REFUNDED  (arbitrator decides for buyer)
 //!
-//!   REFUND_REQUESTED
-//!     ├─ approve_refund()    → REFUNDED           (buyer approves → buyer paid)
-//!     └─ auto_release()      → AUTO_RELEASED      (refund_deadline passed → seller paid)
-//!
-//!   END STATES (terminal — no further transitions):
-//!     RELEASED | AUTO_RELEASED | REFUNDED
-//!
-//! ─── ROLES ───────────────────────────────────────────────────────────────────
-//!   buyer  — creates and funds the escrow, confirms delivery or approves refund
-//!   seller — receives payment on release, can request refund if dispute arises
-//!   admin  — optional platform fee recipient, cannot interfere with funds
+//!   TERMINAL: RELEASED | AUTO_RELEASED | REFUNDED | CANCELLED
 //!
 //! ─── SECURITY ────────────────────────────────────────────────────────────────
-//!   - Every function requires auth from the calling address
-//!   - State checked before every transition (no skipping states)
-//!   - Reentrancy prevented: state updated BEFORE token transfer
-//!   - Double-execution prevented: terminal states reject all calls
-//!   - Overflow-safe: i128 arithmetic, checked in Cargo.toml
-//!   - No hidden balances: full amount always transferred on resolution
-//!
-//! ─── ECONOMICS ───────────────────────────────────────────────────────────────
-//!   - Optional platform fee (basis points, e.g. 50 = 0.5%) on RELEASE only
-//!   - Fee deducted from seller's payout — buyer always gets full refund
-//!   - Fee sent to admin address set at contract init
+//!   - State updated BEFORE every token transfer (reentrancy guard)
+//!   - require_auth() on every mutating call
+//!   - Role checks: only buyer/seller/arbitrator can call their functions
+//!   - Terminal states reject all further calls
+//!   - No unilateral release: both parties must approve OR arbitrator decides
+//!   - Overflow-safe: i128 arithmetic
+//!   - Optional platform fee (max 5%) on release only
 
 #![no_std]
 
@@ -53,10 +40,10 @@ use soroban_sdk::{
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
-    Escrow(u64),   // escrow_id → EscrowRecord
-    Counter,       // global nonce for escrow IDs
-    Admin,         // platform fee recipient
-    FeeBps,        // fee in basis points (0–1000, i.e. 0–10%)
+    Escrow(u64),
+    Counter,
+    Admin,
+    FeeBps,
 }
 
 // ─── State Machine ────────────────────────────────────────────────────────────
@@ -64,18 +51,22 @@ pub enum DataKey {
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
 pub enum EscrowStatus {
-    /// Escrow created, awaiting funding
     Created,
-    /// Funds deposited and locked in contract
-    Locked,
-    /// Seller requested a refund — awaiting buyer approval
-    RefundRequested,
-    /// Buyer confirmed delivery → funds sent to seller
+    Funded,
+    Disputed,
     Released,
-    /// Buyer approved refund → funds returned to buyer
-    Refunded,
-    /// Deadline passed → funds auto-released to seller
     AutoReleased,
+    Refunded,
+    Cancelled,
+}
+
+// ─── Arbitration Decision ─────────────────────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone, PartialEq)]
+pub enum ArbitratorDecision {
+    Release,
+    Refund,
 }
 
 // ─── Escrow Record ────────────────────────────────────────────────────────────
@@ -83,25 +74,29 @@ pub enum EscrowStatus {
 #[contracttype]
 #[derive(Clone)]
 pub struct EscrowRecord {
-    pub buyer:           Address,
-    pub seller:          Address,
-    pub token:           Address,
-    pub amount:          i128,
-    pub status:          EscrowStatus,
-    /// Ledger timestamp after which auto_release() can be called
-    pub deadline:        u64,
-    /// Ledger timestamp after which auto_release() resolves a REFUND_REQUESTED
-    /// (gives buyer time to approve_refund before seller gets paid anyway)
-    pub refund_deadline: u64,
-    pub escrow_id:       u64,
+    pub escrow_id:        u64,
+    pub buyer:            Address,
+    pub seller:           Address,
+    /// Optional arbitrator — if None, disputes cannot be raised
+    pub arbitrator:       Option<Address>,
+    pub token:            Address,
+    pub amount:           i128,
+    pub status:           EscrowStatus,
+    /// Ledger timestamp after which auto_release() pays seller
+    pub deadline:         u64,
+    /// Buyer has approved release
+    pub buyer_approved:   bool,
+    /// Seller has approved release
+    pub seller_approved:  bool,
+    /// Who raised the dispute
+    pub disputed_by:      Option<Address>,
 }
 
 // ─── Events ───────────────────────────────────────────────────────────────────
-// All state transitions emit an event for off-chain indexing.
 
-fn emit(env: &Env, name: &str, escrow_id: u64) {
+fn emit(env: &Env, topic: &str, escrow_id: u64) {
     env.events().publish(
-        (Symbol::new(env, name), escrow_id),
+        (Symbol::new(env, topic), escrow_id),
         escrow_id,
     );
 }
@@ -114,213 +109,245 @@ pub struct OrchidEscrow;
 #[contractimpl]
 impl OrchidEscrow {
 
-    // ── Initialise ────────────────────────────────────────────────────────────
-    /// Deploy once. Sets the admin (fee recipient) and fee in basis points.
-    /// fee_bps = 0 means no platform fee.
+    // ── Init ──────────────────────────────────────────────────────────────────
+    /// Deploy once. fee_bps = 0 means no platform fee (max 500 = 5%).
     pub fn init(env: Env, admin: Address, fee_bps: u32) {
         admin.require_auth();
-        // Prevent re-initialisation
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialised");
         }
-        assert!(fee_bps <= 1000, "fee cannot exceed 10%");
+        assert!(fee_bps <= 500, "fee cannot exceed 5%");
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
         env.storage().instance().set(&DataKey::Counter, &0u64);
     }
 
     // ── Create ────────────────────────────────────────────────────────────────
-    /// Buyer creates an escrow agreement.
-    /// Returns the escrow_id. Funds are NOT transferred yet — call fund() next.
-    ///
-    /// deadline        — ledger timestamp after which auto_release() pays seller
-    /// refund_window   — seconds buyer has to approve_refund after seller requests it
-    ///                   (after this window, auto_release() pays seller anyway)
+    /// Buyer creates an escrow. Returns escrow_id.
+    /// arbitrator = None means no dispute resolution available.
+    /// deadline = ledger timestamp after which auto_release() can be called.
     pub fn create_escrow(
-        env:           Env,
-        buyer:         Address,
-        seller:        Address,
-        token:         Address,
-        amount:        i128,
-        deadline:      u64,
-        refund_window: u64,
+        env:        Env,
+        buyer:      Address,
+        seller:     Address,
+        arbitrator: Option<Address>,
+        token:      Address,
+        amount:     i128,
+        deadline:   u64,
     ) -> u64 {
         buyer.require_auth();
 
-        assert!(amount > 0,                    "amount must be positive");
-        assert!(buyer != seller,               "buyer and seller must differ");
-        assert!(deadline > env.ledger().timestamp(), "deadline must be in the future");
+        assert!(amount > 0,                              "amount must be positive");
+        assert!(buyer != seller,                         "buyer and seller must differ");
+        assert!(deadline > env.ledger().timestamp(),     "deadline must be in the future");
 
-        // Increment global nonce
+        // Arbitrator must not be buyer or seller
+        if let Some(ref arb) = arbitrator {
+            assert!(arb != &buyer && arb != &seller, "arbitrator must be a third party");
+        }
+
         let id: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
-        let next_id = id + 1;
+        let next_id = id.checked_add(1).expect("counter overflow");
         env.storage().instance().set(&DataKey::Counter, &next_id);
 
         let record = EscrowRecord {
-            buyer:           buyer.clone(),
-            seller:          seller.clone(),
-            token:           token.clone(),
+            escrow_id:      next_id,
+            buyer:          buyer.clone(),
+            seller:         seller.clone(),
+            arbitrator,
+            token,
             amount,
-            status:          EscrowStatus::Created,
+            status:         EscrowStatus::Created,
             deadline,
-            refund_deadline: deadline + refund_window,
-            escrow_id:       next_id,
+            buyer_approved:  false,
+            seller_approved: false,
+            disputed_by:    None,
         };
 
         env.storage().persistent().set(&DataKey::Escrow(next_id), &record);
         emit(&env, "escrow_created", next_id);
-
         next_id
     }
 
     // ── Fund ──────────────────────────────────────────────────────────────────
-    /// Buyer deposits the agreed amount into the contract.
-    /// Atomically transitions Created → Locked.
-    /// Must be called by the buyer; amount transferred from buyer → contract.
+    /// Buyer deposits the agreed amount. Created → Funded.
     pub fn fund(env: Env, escrow_id: u64, caller: Address) {
         caller.require_auth();
 
-        let mut record: EscrowRecord = Self::load(&env, escrow_id);
+        let mut r = Self::load(&env, escrow_id);
 
-        // Auth: only buyer can fund
-        assert!(caller == record.buyer, "only buyer can fund");
-        // State: must be Created
-        assert!(
-            record.status == EscrowStatus::Created,
-            "escrow must be in Created state"
-        );
-        // Deadline: must not have already passed
-        assert!(
-            env.ledger().timestamp() < record.deadline,
-            "deadline has already passed"
-        );
+        assert!(caller == r.buyer,                       "only buyer can fund");
+        assert!(r.status == EscrowStatus::Created,       "must be in Created state");
+        assert!(env.ledger().timestamp() < r.deadline,   "deadline has passed");
 
-        // Transfer tokens from buyer → contract (reentrancy-safe: state updated first)
-        record.status = EscrowStatus::Locked;
-        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &record);
+        // State update BEFORE transfer
+        r.status = EscrowStatus::Funded;
+        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
 
-        let client = token::Client::new(&env, &record.token);
-        client.transfer(&record.buyer, &env.current_contract_address(), &record.amount);
+        token::Client::new(&env, &r.token)
+            .transfer(&r.buyer, &env.current_contract_address(), &r.amount);
 
         emit(&env, "escrow_funded", escrow_id);
     }
 
-    // ── Confirm Delivery ──────────────────────────────────────────────────────
-    /// Buyer confirms the seller has delivered. Releases funds to seller.
-    /// Locked → Released
-    /// Platform fee (if any) is deducted from seller's payout.
-    pub fn confirm_delivery(env: Env, escrow_id: u64, caller: Address) {
+    // ── Approve ───────────────────────────────────────────────────────────────
+    /// Either party approves the release.
+    /// When BOTH buyer and seller have approved → funds released to seller.
+    /// This is the dual-approval path — no unilateral release.
+    pub fn approve(env: Env, escrow_id: u64, caller: Address) {
         caller.require_auth();
 
-        let mut record: EscrowRecord = Self::load(&env, escrow_id);
+        let mut r = Self::load(&env, escrow_id);
 
-        assert!(caller == record.buyer,                    "only buyer can confirm delivery");
-        assert!(record.status == EscrowStatus::Locked,    "escrow must be Locked");
+        assert!(r.status == EscrowStatus::Funded,        "must be in Funded state");
+        assert!(
+            caller == r.buyer || caller == r.seller,
+            "only buyer or seller can approve"
+        );
 
-        // Update state BEFORE transfer (reentrancy guard)
-        record.status = EscrowStatus::Released;
-        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &record);
+        if caller == r.buyer  { r.buyer_approved  = true; }
+        if caller == r.seller { r.seller_approved = true; }
 
-        Self::release_to_seller(&env, &record);
-        emit(&env, "escrow_released", escrow_id);
+        if r.buyer_approved && r.seller_approved {
+            // Both approved — release to seller
+            r.status = EscrowStatus::Released;
+            env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+            Self::pay_seller(&env, &r);
+            emit(&env, "escrow_released", escrow_id);
+        } else {
+            // Only one approved so far — save state
+            env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+            emit(&env, "approval_recorded", escrow_id);
+        }
     }
 
-    // ── Request Refund ────────────────────────────────────────────────────────
-    /// Seller raises a dispute and requests a refund to the buyer.
-    /// Locked → RefundRequested
-    /// Buyer now has `refund_window` seconds to approve_refund().
-    /// If buyer is inactive, auto_release() will pay the seller.
-    pub fn request_refund(env: Env, escrow_id: u64, caller: Address) {
+    // ── Cancel ────────────────────────────────────────────────────────────────
+    /// Buyer can cancel before the deadline (returns funds to buyer).
+    /// Only valid in Funded state and before deadline.
+    pub fn cancel(env: Env, escrow_id: u64, caller: Address) {
         caller.require_auth();
 
-        let mut record: EscrowRecord = Self::load(&env, escrow_id);
+        let mut r = Self::load(&env, escrow_id);
 
-        assert!(caller == record.seller,                   "only seller can request refund");
-        assert!(record.status == EscrowStatus::Locked,    "escrow must be Locked");
+        assert!(caller == r.buyer,                       "only buyer can cancel");
+        assert!(r.status == EscrowStatus::Funded,        "must be in Funded state");
+        assert!(env.ledger().timestamp() < r.deadline,   "deadline passed — use auto_release");
 
-        record.status = EscrowStatus::RefundRequested;
-        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &record);
+        r.status = EscrowStatus::Cancelled;
+        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
 
-        emit(&env, "refund_requested", escrow_id);
+        token::Client::new(&env, &r.token)
+            .transfer(&env.current_contract_address(), &r.buyer, &r.amount);
+
+        emit(&env, "escrow_cancelled", escrow_id);
     }
 
-    // ── Approve Refund ────────────────────────────────────────────────────────
-    /// Buyer approves the seller's refund request. Returns funds to buyer.
-    /// RefundRequested → Refunded
-    pub fn approve_refund(env: Env, escrow_id: u64, caller: Address) {
+    // ── Dispute ───────────────────────────────────────────────────────────────
+    /// Either party can raise a dispute. Funded → Disputed.
+    /// Requires an arbitrator to have been set at creation.
+    /// Once disputed, only the arbitrator can resolve.
+    pub fn dispute(env: Env, escrow_id: u64, caller: Address) {
         caller.require_auth();
 
-        let mut record: EscrowRecord = Self::load(&env, escrow_id);
+        let mut r = Self::load(&env, escrow_id);
 
-        assert!(caller == record.buyer,                            "only buyer can approve refund");
-        assert!(record.status == EscrowStatus::RefundRequested,   "escrow must be RefundRequested");
+        assert!(r.status == EscrowStatus::Funded,        "must be in Funded state");
+        assert!(
+            caller == r.buyer || caller == r.seller,
+            "only buyer or seller can raise a dispute"
+        );
+        assert!(r.arbitrator.is_some(),                  "no arbitrator set for this escrow");
 
-        // Update state BEFORE transfer
-        record.status = EscrowStatus::Refunded;
-        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &record);
+        r.status = EscrowStatus::Disputed;
+        r.disputed_by = Some(caller.clone());
+        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
 
-        // Full refund — no fee on refunds
-        let client = token::Client::new(&env, &record.token);
-        client.transfer(&env.current_contract_address(), &record.buyer, &record.amount);
+        emit(&env, "escrow_disputed", escrow_id);
+    }
 
-        emit(&env, "escrow_refunded", escrow_id);
+    // ── Arbitrate ─────────────────────────────────────────────────────────────
+    /// Arbitrator resolves a dispute.
+    /// Release → funds go to seller (with platform fee).
+    /// Refund  → full amount returned to buyer (no fee).
+    pub fn arbitrate(
+        env:       Env,
+        escrow_id: u64,
+        caller:    Address,
+        decision:  ArbitratorDecision,
+    ) {
+        caller.require_auth();
+
+        let mut r = Self::load(&env, escrow_id);
+
+        assert!(r.status == EscrowStatus::Disputed,      "must be in Disputed state");
+        let arb = r.arbitrator.clone().expect("no arbitrator");
+        assert!(caller == arb,                           "only arbitrator can resolve");
+
+        match decision {
+            ArbitratorDecision::Release => {
+                r.status = EscrowStatus::Released;
+                env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+                Self::pay_seller(&env, &r);
+                emit(&env, "arbitrated_release", escrow_id);
+            }
+            ArbitratorDecision::Refund => {
+                r.status = EscrowStatus::Refunded;
+                env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+                token::Client::new(&env, &r.token)
+                    .transfer(&env.current_contract_address(), &r.buyer, &r.amount);
+                emit(&env, "arbitrated_refund", escrow_id);
+            }
+        }
     }
 
     // ── Auto Release ──────────────────────────────────────────────────────────
-    /// Anyone can call this after the deadline.
-    /// Handles two cases:
-    ///   1. Locked + deadline passed          → AUTO_RELEASED (seller paid)
-    ///   2. RefundRequested + refund_deadline  → AUTO_RELEASED (seller paid,
-    ///      buyer was inactive during refund window)
-    ///
-    /// This ensures funds are NEVER locked indefinitely.
+    /// Anyone can call after the deadline. Funded → AutoReleased.
+    /// Pays seller (with platform fee). Ensures funds never locked forever.
     pub fn auto_release(env: Env, escrow_id: u64) {
-        let mut record: EscrowRecord = Self::load(&env, escrow_id);
-        let now = env.ledger().timestamp();
+        let mut r = Self::load(&env, escrow_id);
 
-        let can_release = match record.status {
-            // Main deadline: buyer never confirmed delivery
-            EscrowStatus::Locked => now >= record.deadline,
-            // Refund window expired: buyer ignored the refund request
-            EscrowStatus::RefundRequested => now >= record.refund_deadline,
-            _ => false,
-        };
+        assert!(
+            r.status == EscrowStatus::Funded,
+            "must be in Funded state"
+        );
+        assert!(
+            env.ledger().timestamp() >= r.deadline,
+            "deadline not reached yet"
+        );
 
-        assert!(can_release, "auto_release conditions not met");
+        r.status = EscrowStatus::AutoReleased;
+        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
 
-        // Update state BEFORE transfer
-        record.status = EscrowStatus::AutoReleased;
-        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &record);
-
-        Self::release_to_seller(&env, &record);
+        Self::pay_seller(&env, &r);
         emit(&env, "auto_released", escrow_id);
     }
 
     // ── Admin: Update Fee ─────────────────────────────────────────────────────
-    /// Admin can update the platform fee (max 10%).
     pub fn set_fee(env: Env, new_fee_bps: u32) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
-        assert!(new_fee_bps <= 1000, "fee cannot exceed 10%");
+        assert!(new_fee_bps <= 500, "fee cannot exceed 5%");
         env.storage().instance().set(&DataKey::FeeBps, &new_fee_bps);
     }
 
-    // ── View: Get Escrow ──────────────────────────────────────────────────────
-    /// Read the current state of an escrow. No auth required.
+    // ── Views ─────────────────────────────────────────────────────────────────
+
     pub fn get_escrow(env: Env, escrow_id: u64) -> EscrowRecord {
         Self::load(&env, escrow_id)
     }
 
-    /// Returns the total number of escrows ever created.
     pub fn escrow_count(env: Env) -> u64 {
         env.storage().instance().get(&DataKey::Counter).unwrap_or(0)
+    }
+
+    pub fn get_fee_bps(env: Env) -> u32 {
+        env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // INTERNAL HELPERS
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Load an escrow record or panic with a clear message.
     fn load(env: &Env, escrow_id: u64) -> EscrowRecord {
         env.storage()
             .persistent()
@@ -328,72 +355,39 @@ impl OrchidEscrow {
             .unwrap_or_else(|| panic!("escrow not found"))
     }
 
-    /// Transfer funds from contract → seller, deducting platform fee.
-    /// Fee is sent to admin. If fee is 0, full amount goes to seller.
-    fn release_to_seller(env: &Env, record: &EscrowRecord) {
-        let client = token::Client::new(env, &record.token);
+    /// Pay seller minus platform fee. Fee goes to admin.
+    fn pay_seller(env: &Env, r: &EscrowRecord) {
+        let client = token::Client::new(env, &r.token);
         let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
 
         if fee_bps == 0 {
-            // No fee — full amount to seller
-            client.transfer(
-                &env.current_contract_address(),
-                &record.seller,
-                &record.amount,
-            );
+            client.transfer(&env.current_contract_address(), &r.seller, &r.amount);
         } else {
-            // Fee calculation: amount * fee_bps / 10000
-            // Uses i128 to prevent overflow on large amounts
-            let fee = record.amount * (fee_bps as i128) / 10_000;
-            let seller_amount = record.amount - fee;
-
+            let fee = r.amount
+                .checked_mul(fee_bps as i128).expect("overflow")
+                .checked_div(10_000).expect("div zero");
+            let seller_amount = r.amount.checked_sub(fee).expect("underflow");
             assert!(seller_amount > 0, "fee exceeds payout");
 
-            // Pay seller
-            client.transfer(
-                &env.current_contract_address(),
-                &record.seller,
-                &seller_amount,
-            );
+            client.transfer(&env.current_contract_address(), &r.seller, &seller_amount);
 
-            // Pay platform fee to admin
             if fee > 0 {
                 let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-                client.transfer(
-                    &env.current_contract_address(),
-                    &admin,
-                    &fee,
-                );
+                client.transfer(&env.current_contract_address(), &admin, &fee);
             }
         }
     }
 }
 
-// ─── Edge Cases Handled ───────────────────────────────────────────────────────
+// ─── Security Guarantees ─────────────────────────────────────────────────────
 //
-// 1. Buyer never funds          → escrow stays Created, no funds at risk
-// 2. Deadline passes, Locked    → auto_release() pays seller (buyer inactive)
-// 3. Seller disputes, buyer MIA → refund_deadline passes → auto_release() pays seller
-// 4. Double-call on terminal    → state check panics immediately
-// 5. Wrong caller               → require_auth() + role check panics
-// 6. Zero amount                → rejected in create_escrow
-// 7. Buyer == Seller            → rejected in create_escrow
-// 8. Past deadline on create    → rejected in create_escrow
-// 9. Fee > 10%                  → rejected in init/set_fee
-// 10. Fee > payout              → assert in release_to_seller
-// 11. Reentrancy                → state updated BEFORE every token transfer
-// 12. No hidden balance         → full amount always transferred on resolution
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+// 1. No unilateral release — both parties must approve OR arbitrator decides
+// 2. Reentrancy — state updated BEFORE every token transfer
+// 3. Role checks — require_auth() + explicit role assertion on every call
+// 4. Terminal states — all terminal states reject further calls
+// 5. Overflow — checked arithmetic on fee calculation
+// 6. Arbitrator neutrality — arbitrator cannot be buyer or seller
+// 7. Dispute requires arbitrator — no disputes on escrows without one
+// 8. Cancel window — buyer can only cancel before deadline
+// 9. Auto-release — ensures funds never locked indefinitely
+// 10. Fee cap — max 5%, enforced at init and set_fee

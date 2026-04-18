@@ -1,10 +1,19 @@
 /**
  * Orchid Escrow Contract Client
  * ──────────────────────────────
- * Calls the deployed Soroban escrow contract directly.
- * Funds go INTO the contract — no custody wallet needed.
+ * Wired to the new production contract:
+ * CDFOU467L7VRG7HFXWYBNUYMEFTW73I2E6L2HN33RHOCHEGDFKQL2JPH
  *
- * Contract: CBSRC76C3WHLSZP6K3QNAVEZERX4G3YT6ECRFU5YED2ILZ35NGQ7GSXN
+ * New contract functions:
+ *   create_escrow(buyer, seller, arbitrator?, token, amount, deadline)
+ *   fund(escrow_id, caller)
+ *   approve(escrow_id, caller)          ← dual-approval (replaces confirm_delivery)
+ *   cancel(escrow_id, caller)           ← buyer cancels before deadline
+ *   dispute(escrow_id, caller)          ← either party raises dispute
+ *   arbitrate(escrow_id, caller, decision) ← arbitrator resolves
+ *   auto_release(escrow_id)             ← anyone after deadline
+ *   get_escrow(escrow_id)
+ *   escrow_count()
  */
 
 import {
@@ -22,61 +31,52 @@ import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit/sdk';
 const RPC_URL      = 'https://soroban-testnet.stellar.org';
 const CONTRACT_ID  = import.meta.env.VITE_ESCROW_CONTRACT_ID;
 const NETWORK_PASS = Networks.TESTNET;
-const BASE_FEE     = '100000'; // 0.01 XLM — Soroban needs higher fee than Horizon
+const BASE_FEE     = '300000';
+// Native XLM token on testnet
+const NATIVE_TOKEN  = import.meta.env.VITE_NATIVE_TOKEN  || 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+// Dummy funded account for read-only simulations
+const DUMMY_ACCOUNT = import.meta.env.VITE_ADMIN_ADDRESS  || 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN';
 
 const rpcServer = new SorobanRpc.Server(RPC_URL);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function addressVal(addr) {
-  return new Address(addr).toScVal();
-}
-
-function u64Val(n) {
-  return xdr.ScVal.scvU64(xdr.Uint64.fromString(String(n)));
-}
-
-function i128Val(n) {
-  // i128 as ScVal — amount in stroops (XLM * 1e7)
-  const stroops = BigInt(Math.round(parseFloat(n) * 1e7));
+function addressVal(addr) { return new Address(addr).toScVal(); }
+function u64Val(n)        { return xdr.ScVal.scvU64(xdr.Uint64.fromString(String(n))); }
+function i128Val(xlm) {
+  const stroops = BigInt(Math.round(parseFloat(xlm) * 1e7));
   return nativeToScVal(stroops, { type: 'i128' });
 }
+function optionNone() {
+  return xdr.ScVal.scvVoid();
+}
+function optionSome(val) {
+  return val;
+}
 
-/**
- * Build, simulate, sign and submit a Soroban contract call.
- */
 async function invokeContract(callerAddress, method, args) {
   if (!CONTRACT_ID) throw new Error('VITE_ESCROW_CONTRACT_ID not set');
 
-  // 1. Load account
   const account = await rpcServer.getAccount(callerAddress);
-
-  // 2. Build transaction
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASS,
   })
-    .addOperation(
-      Operation.invokeContractFunction({
-        contract: CONTRACT_ID,
-        function: method,
-        args,
-      })
-    )
+    .addOperation(Operation.invokeContractFunction({
+      contract: CONTRACT_ID,
+      function: method,
+      args,
+    }))
     .setTimeout(60)
     .build();
 
-  // 3. Simulate to get footprint + auth
   const simResult = await rpcServer.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
+  if (SorobanRpc.Api.isSimulationError(simResult))
     throw new Error(`Simulation failed: ${simResult.error}`);
-  }
 
-  // 4. Assemble (applies footprint + resource fees)
   const assembled = SorobanRpc.assembleTransaction(tx, simResult).build();
-
-  // 5. Sign via wallet kit
   const xdrStr = assembled.toXDR();
+
   const result = await StellarWalletsKit.signTransaction(xdrStr, {
     networkPassphrase: NETWORK_PASS,
     address: callerAddress,
@@ -84,34 +84,48 @@ async function invokeContract(callerAddress, method, args) {
   const signedXdr = typeof result === 'string' ? result : result?.signedTxXdr ?? result?.xdr;
   if (!signedXdr) throw new Error('Signing cancelled');
 
-  // 6. Submit
   const sendResult = await rpcServer.sendTransaction(
     TransactionBuilder.fromXDR(signedXdr, NETWORK_PASS)
   );
-
-  if (sendResult.status === 'ERROR') {
+  if (sendResult.status === 'ERROR')
     throw new Error(`Submit failed: ${sendResult.errorResult?.toXDR('base64')}`);
-  }
 
-  // 7. Poll for confirmation
   const hash = sendResult.hash;
   for (let i = 0; i < 30; i++) {
     await new Promise(r => setTimeout(r, 2000));
     const status = await rpcServer.getTransaction(hash);
-    if (status.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+    if (status.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS)
       return { hash, result: status.returnValue };
-    }
-    if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
+    if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED)
       throw new Error(`Contract call failed: ${hash}`);
-    }
   }
   throw new Error('Transaction confirmation timeout');
+}
+
+async function readOnly(method, args) {
+  if (!CONTRACT_ID) return null;
+  try {
+    const account = await rpcServer.getAccount(DUMMY_ACCOUNT);
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE, networkPassphrase: NETWORK_PASS,
+    })
+      .addOperation(Operation.invokeContractFunction({
+        contract: CONTRACT_ID, function: method, args,
+      }))
+      .setTimeout(60)
+      .build();
+    const sim = await rpcServer.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationSuccess(sim) && sim.result?.retval)
+      return scValToNative(sim.result.retval);
+  } catch { /* silent */ }
+  return null;
 }
 
 // ── Contract Functions ────────────────────────────────────────────────────────
 
 /**
- * create_escrow + fund in one flow.
+ * Create escrow + fund in one flow.
+ * arbitratorAddress = null for no arbitrator.
  * Returns { escrow_id, hash }
  */
 export async function contractCreateEscrow(
@@ -119,23 +133,24 @@ export async function contractCreateEscrow(
   sellerAddress,
   amountXlm,
   expiryDays,
-  refundWindowDays = 3
+  arbitratorAddress = null
 ) {
-  const now = Math.floor(Date.now() / 1000);
-  const deadline      = now + parseInt(expiryDays)      * 86400;
-  const refundWindow  = parseInt(refundWindowDays)       * 86400;
+  const now      = Math.floor(Date.now() / 1000);
+  const deadline = now + parseInt(expiryDays) * 86400;
 
-  // Native XLM token address on testnet
-  const NATIVE_TOKEN = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+  // Arbitrator is Option<Address> — None = void, Some = address
+  const arbitratorArg = arbitratorAddress
+    ? optionSome(addressVal(arbitratorAddress))
+    : optionNone();
 
   // Step 1: create_escrow
   const createResult = await invokeContract(buyerAddress, 'create_escrow', [
     addressVal(buyerAddress),
     addressVal(sellerAddress),
+    arbitratorArg,
     addressVal(NATIVE_TOKEN),
     i128Val(amountXlm),
     u64Val(deadline),
-    u64Val(refundWindow),
   ]);
 
   const escrowId = scValToNative(createResult.result);
@@ -150,32 +165,50 @@ export async function contractCreateEscrow(
 }
 
 /**
- * confirm_delivery — buyer confirms, contract pays seller.
+ * approve — either buyer or seller approves release.
+ * When both approve, funds go to seller automatically.
  */
-export async function contractConfirmDelivery(buyerAddress, escrowId) {
-  return invokeContract(buyerAddress, 'confirm_delivery', [
+export async function contractApprove(callerAddress, escrowId) {
+  return invokeContract(callerAddress, 'approve', [
+    u64Val(escrowId),
+    addressVal(callerAddress),
+  ]);
+}
+
+/**
+ * cancel — buyer cancels before deadline, gets refund.
+ */
+export async function contractCancel(buyerAddress, escrowId) {
+  return invokeContract(buyerAddress, 'cancel', [
     u64Val(escrowId),
     addressVal(buyerAddress),
   ]);
 }
 
 /**
- * request_refund — seller requests refund.
+ * dispute — either party raises a dispute (requires arbitrator).
  */
-export async function contractRequestRefund(sellerAddress, escrowId) {
-  return invokeContract(sellerAddress, 'request_refund', [
+export async function contractDispute(callerAddress, escrowId) {
+  return invokeContract(callerAddress, 'dispute', [
     u64Val(escrowId),
-    addressVal(sellerAddress),
+    addressVal(callerAddress),
   ]);
 }
 
 /**
- * approve_refund — buyer approves, contract returns funds to buyer.
+ * arbitrate — arbitrator resolves dispute.
+ * decision: 'Release' (pay seller) or 'Refund' (pay buyer)
  */
-export async function contractApproveRefund(buyerAddress, escrowId) {
-  return invokeContract(buyerAddress, 'approve_refund', [
+export async function contractArbitrate(arbitratorAddress, escrowId, decision) {
+  // decision is an enum: { Release: {} } or { Refund: {} }
+  const decisionVal = decision === 'Release'
+    ? xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Release')])
+    : xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Refund')]);
+
+  return invokeContract(arbitratorAddress, 'arbitrate', [
     u64Val(escrowId),
-    addressVal(buyerAddress),
+    addressVal(arbitratorAddress),
+    decisionVal,
   ]);
 }
 
@@ -188,53 +221,34 @@ export async function contractAutoRelease(callerAddress, escrowId) {
   ]);
 }
 
-/**
- * escrow_count — total escrows ever created.
- */
-export async function contractEscrowCount() {
-  if (!CONTRACT_ID) return 0;
-  try {
-    const result = await rpcServer.simulateTransaction(
-      new TransactionBuilder(
-        await rpcServer.getAccount('GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN'),
-        { fee: BASE_FEE, networkPassphrase: NETWORK_PASS }
-      )
-        .addOperation(Operation.invokeContractFunction({
-          contract: CONTRACT_ID,
-          function: 'escrow_count',
-          args: [],
-        }))
-        .setTimeout(60)
-        .build()
-    );
-    if (SorobanRpc.Api.isSimulationSuccess(result) && result.result?.retval)
-      return scValToNative(result.result.retval);
-  } catch { /* silent */ }
-  return 0;
+// ── Legacy aliases (keep wallet.js working without changes) ──────────────────
+
+/** Alias: buyer confirms delivery = buyer approves */
+export async function contractConfirmDelivery(buyerAddress, escrowId) {
+  return contractApprove(buyerAddress, escrowId);
 }
 
-/**
- * get_escrow — read state (no auth needed, uses RPC directly).
- */
+/** Alias: request_refund = cancel (buyer) */
+export async function contractRequestRefund(buyerAddress, escrowId) {
+  return contractCancel(buyerAddress, escrowId);
+}
+
+/** Alias: approve_refund = cancel (buyer) — same outcome */
+export async function contractApproveRefund(buyerAddress, escrowId) {
+  return contractCancel(buyerAddress, escrowId);
+}
+
+// ── Read-only Views ───────────────────────────────────────────────────────────
+
 export async function contractGetEscrow(escrowId) {
-  if (!CONTRACT_ID) return null;
-  try {
-    const result = await rpcServer.simulateTransaction(
-      new TransactionBuilder(
-        await rpcServer.getAccount('GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN'),
-        { fee: BASE_FEE, networkPassphrase: NETWORK_PASS }
-      )
-        .addOperation(Operation.invokeContractFunction({
-          contract: CONTRACT_ID,
-          function: 'get_escrow',
-          args: [u64Val(escrowId)],
-        }))
-        .setTimeout(60)
-        .build()
-    );
-    if (SorobanRpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-      return scValToNative(result.result.retval);
-    }
-  } catch { /* silent */ }
-  return null;
+  return readOnly('get_escrow', [u64Val(escrowId)]);
+}
+
+export async function contractEscrowCount() {
+  const result = await readOnly('escrow_count', []);
+  return result ?? 0;
+}
+
+export async function contractGetFeeBps() {
+  return readOnly('get_fee_bps', []);
 }
