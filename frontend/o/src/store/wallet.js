@@ -164,6 +164,8 @@ const bigIntSerializer = {
   ),
   deserialize: (str) => JSON.parse(str),
 };
+
+export const useWalletStore = create(
   persist(
     (set, get) => ({
       // ── State ──────────────────────────────────────────────────────────────
