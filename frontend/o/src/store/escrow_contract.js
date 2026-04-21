@@ -263,6 +263,35 @@ export async function contractGetFeeBps() {
 }
 
 /**
+ * getEscrowsForUser — fetches all escrows where address is buyer OR seller.
+ * Scans the last N escrows from the contract and filters by address.
+ * Used to show escrows on BOTH parties' dashboards.
+ */
+export async function getEscrowsForUser(userAddress) {
+  if (!CONTRACT_ID) return [];
+  try {
+    const total = await readOnly('escrow_count', []);
+    if (!total || total === 0) return [];
+
+    const count = Number(total);
+    // Fetch last 50 escrows max for performance
+    const startId = Math.max(1, count - 49);
+
+    const result = await readOnly('get_escrows_range', [
+      u64Val(startId),
+      u64Val(count),
+    ]);
+
+    if (!result || !Array.isArray(result)) return [];
+
+    // Filter to only escrows where user is buyer or seller
+    return result.filter(e =>
+      e.buyer === userAddress || e.seller === userAddress
+    );
+  } catch { return []; }
+}
+
+/**
  * set_fee — admin only. Updates platform fee (max 500 = 5%).
  */
 export async function contractSetFee(adminAddress, newFeeBps) {

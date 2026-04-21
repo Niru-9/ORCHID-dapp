@@ -1,38 +1,33 @@
-//! Orchid Escrow — Soroban Contract v3
+//! Orchid Escrow — Soroban Contract v4 (Production)
 //!
-//! ─── STATE MACHINE ───────────────────────────────────────────────────────────
+//! ─── CLEAN STATE MACHINE ─────────────────────────────────────────────────────
 //!
-//!   create_escrow()          → FUNDED   (buyer creates + funds atomically)
+//!   create_escrow()              → FUNDED  (buyer creates + funds atomically)
 //!
 //!   FUNDED
-//!     ├─ mark_delivered(seller) → DELIVERED  (seller signals delivery)
-//!     ├─ cancel(buyer)          → CANCELLED  (only before delivery)
-//!     ├─ dispute(either)        → DISPUTED   (requires arbitrator)
-//!     └─ auto_release()         → AUTO_RELEASED (main deadline passed)
+//!     ├─ mark_delivered(seller)  → DELIVERED
+//!     ├─ cancel(buyer)           → CANCELLED  (before deadline only)
+//!     └─ refund_after_deadline() → REFUNDED   (buyer, after deadline, seller never delivered)
 //!
 //!   DELIVERED
 //!     ├─ confirm_delivery(buyer) → RELEASED      (buyer confirms → seller paid)
 //!     ├─ dispute(either)         → DISPUTED
-//!     └─ auto_release_after_delivery() → AUTO_RELEASED (buyer timeout)
+//!     └─ auto_release_after_delivery() → AUTO_RELEASED (buyer timeout after delivery)
 //!
 //!   DISPUTED
-//!     ├─ arbitrate(Release) → RELEASED
-//!     └─ arbitrate(Refund)  → REFUNDED
+//!     ├─ arbitrate(Release)      → RELEASED
+//!     └─ arbitrate(Refund)       → REFUNDED
 //!
 //!   TERMINAL: RELEASED | AUTO_RELEASED | REFUNDED | CANCELLED
 //!
-//! ─── CHANGES FROM v2 ─────────────────────────────────────────────────────────
-//!   1. Added Delivered state — seller marks delivery before buyer can confirm
-//!   2. confirm_delivery() now requires Delivered state (prevents random release)
-//!   3. cancel() blocked after delivery (prevents buyer abuse)
-//!   4. auto_release_after_delivery() — if buyer disappears after delivery
-//!   5. funds_sent event emitted on every payout for verification
-//!
-//! ─── SECURITY ────────────────────────────────────────────────────────────────
-//!   - State updated BEFORE every token transfer (reentrancy guard)
-//!   - require_auth() on every mutating call
-//!   - Terminal states reject all further calls
-//!   - Overflow-safe: checked arithmetic
+//! ─── CHANGES FROM v3 ─────────────────────────────────────────────────────────
+//!   1. auto_release() DELETED — was dangerous (paid seller without delivery)
+//!   2. refund_after_deadline() ADDED — buyer protection if seller never delivers
+//!   3. delivery_deadline split into delivery_window_secs + delivery_deadline
+//!   4. approve() REMOVED — was confusing and duplicated logic
+//!   5. assert_not_terminal() helper added — clean terminal state guard
+//!   6. cancel() error message updated to reference refund_after_deadline
+//!   7. funds_sent event on every payout for verification
 
 #![no_std]
 
@@ -58,7 +53,7 @@ pub enum DataKey {
 #[derive(Clone, PartialEq, Debug)]
 pub enum EscrowStatus {
     Funded,
-    Delivered,    // seller has marked delivery, awaiting buyer confirmation
+    Delivered,
     Disputed,
     Released,
     AutoReleased,
@@ -80,19 +75,20 @@ pub enum ArbitratorDecision {
 #[contracttype]
 #[derive(Clone)]
 pub struct EscrowRecord {
-    pub escrow_id:    u64,
-    pub buyer:        Address,
-    pub seller:       Address,
-    pub arbitrator:   Option<Address>,
-    pub token:        Address,
-    pub amount:       i128,
-    pub status:       EscrowStatus,
-    /// Main deadline — auto_release() pays seller if buyer never confirms
-    pub deadline:     u64,
-    /// Delivery deadline — auto_release_after_delivery() fires after this
-    /// Set to deadline by default; can be shorter for faster resolution
-    pub delivery_deadline: u64,
-    pub disputed_by:  Option<Address>,
+    pub escrow_id:            u64,
+    pub buyer:                Address,
+    pub seller:               Address,
+    pub arbitrator:           Option<Address>,
+    pub token:                Address,
+    pub amount:               i128,
+    pub status:               EscrowStatus,
+    /// Absolute timestamp — if seller never delivers, buyer can refund after this
+    pub deadline:             u64,
+    /// Duration in seconds buyer has to confirm after seller marks delivered
+    pub delivery_window_secs: u64,
+    /// Absolute timestamp set when seller calls mark_delivered (0 until then)
+    pub delivery_deadline:    u64,
+    pub disputed_by:          Option<Address>,
 }
 
 // ─── Events ───────────────────────────────────────────────────────────────────
@@ -132,9 +128,9 @@ impl OrchidEscrow {
     }
 
     // ── Create + Fund (atomic) ────────────────────────────────────────────────
-    /// Buyer creates the escrow AND funds it in a single signed transaction.
-    /// delivery_window_secs: how long after delivery buyer has to confirm
-    ///   before auto_release_after_delivery() can fire (e.g. 3 days = 259200)
+    /// Buyer creates AND funds the escrow in one signed transaction.
+    /// deadline: absolute timestamp — if seller never delivers, buyer refunds after this
+    /// delivery_window_secs: how long buyer has to confirm after seller marks delivered
     pub fn create_escrow(
         env:                  Env,
         buyer:                Address,
@@ -161,24 +157,22 @@ impl OrchidEscrow {
         env.storage().instance().set(&DataKey::Counter, &next_id);
 
         let record = EscrowRecord {
-            escrow_id:        next_id,
-            buyer:            buyer.clone(),
-            seller:           seller.clone(),
+            escrow_id:            next_id,
+            buyer:                buyer.clone(),
+            seller:               seller.clone(),
             arbitrator,
-            token:            token.clone(),
+            token:                token.clone(),
             amount,
-            status:           EscrowStatus::Funded,
+            status:               EscrowStatus::Funded,
             deadline,
-            // delivery_deadline is set when seller calls mark_delivered
-            // stored here as 0 until then
-            delivery_deadline: delivery_window_secs, // window duration, not absolute time
-            disputed_by:      None,
+            delivery_window_secs, // duration stored separately
+            delivery_deadline:    0, // set when seller calls mark_delivered
+            disputed_by:          None,
         };
 
         // State update BEFORE transfer (reentrancy guard)
         env.storage().persistent().set(&DataKey::Escrow(next_id), &record);
 
-        // Fund atomically — buyer signs this transaction
         token::Client::new(&env, &token)
             .transfer(&buyer, &env.current_contract_address(), &amount);
 
@@ -189,20 +183,21 @@ impl OrchidEscrow {
     }
 
     // ── Mark Delivered ────────────────────────────────────────────────────────
-    /// Seller signals that delivery is complete.
-    /// Funded → Delivered
-    /// After this, buyer has delivery_window_secs to confirm before auto-release.
+    /// Seller signals delivery is complete. Funded → Delivered.
+    /// Sets delivery_deadline = now + delivery_window_secs.
     pub fn mark_delivered(env: Env, escrow_id: u64, caller: Address) {
         caller.require_auth();
 
         let mut r = Self::load(&env, escrow_id);
 
-        assert!(caller == r.seller,                 "only seller can mark delivered");
-        assert!(r.status == EscrowStatus::Funded,   "must be in Funded state");
+        Self::assert_not_terminal(&r.status);
+        assert!(caller == r.seller,               "only seller can mark delivered");
+        assert!(r.status == EscrowStatus::Funded, "must be in Funded state");
 
-        // Set the absolute delivery deadline = now + window
+        // Calculate absolute delivery deadline from window duration
         let delivery_deadline = env.ledger().timestamp()
-            .checked_add(r.delivery_deadline).expect("overflow");
+            .checked_add(r.delivery_window_secs).expect("overflow");
+
         r.delivery_deadline = delivery_deadline;
         r.status = EscrowStatus::Delivered;
         env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
@@ -218,59 +213,30 @@ impl OrchidEscrow {
 
         let mut r = Self::load(&env, escrow_id);
 
-        assert!(caller == r.buyer,                    "only buyer can confirm delivery");
-        // CRITICAL: must be Delivered first — buyer cannot randomly release
-        assert!(r.status == EscrowStatus::Delivered,  "seller must mark delivered first");
+        Self::assert_not_terminal(&r.status);
+        assert!(caller == r.buyer,                   "only buyer can confirm delivery");
+        assert!(r.status == EscrowStatus::Delivered, "seller must mark delivered first");
 
         r.status = EscrowStatus::Released;
         env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
 
         Self::pay_seller(&env, &r);
-
         emit(&env, "escrow_released", escrow_id);
     }
 
-    // ── Approve (backward-compat alias) ───────────────────────────────────────
-    /// Kept for frontend compatibility.
-    /// Buyer calling approve() after delivery = confirm_delivery.
-    pub fn approve(env: Env, escrow_id: u64, caller: Address) {
-        caller.require_auth();
-
-        let r = Self::load(&env, escrow_id);
-
-        if caller == r.buyer && r.status == EscrowStatus::Delivered {
-            // Delegate to confirm_delivery
-            let mut r = r;
-            r.status = EscrowStatus::Released;
-            env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
-            Self::pay_seller(&env, &r);
-            emit(&env, "escrow_released", escrow_id);
-        } else if caller == r.seller && r.status == EscrowStatus::Funded {
-            // Seller calling approve = mark_delivered
-            let delivery_deadline = env.ledger().timestamp()
-                .checked_add(r.delivery_deadline).expect("overflow");
-            let mut r = r;
-            r.delivery_deadline = delivery_deadline;
-            r.status = EscrowStatus::Delivered;
-            env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
-            emit(&env, "marked_delivered", escrow_id);
-        } else {
-            emit(&env, "approval_recorded", escrow_id);
-        }
-    }
-
     // ── Cancel ────────────────────────────────────────────────────────────────
-    /// Buyer cancels — only allowed in Funded state (before delivery).
-    /// Once seller marks delivered, buyer cannot cancel.
+    /// Buyer cancels before deadline — only in Funded state (before delivery).
     pub fn cancel(env: Env, escrow_id: u64, caller: Address) {
         caller.require_auth();
 
         let mut r = Self::load(&env, escrow_id);
 
-        assert!(caller == r.buyer,                  "only buyer can cancel");
-        // Restricted to Funded only — cannot cancel after delivery
-        assert!(r.status == EscrowStatus::Funded,   "cannot cancel after delivery is marked");
-        assert!(env.ledger().timestamp() < r.deadline, "deadline passed — use auto_release");
+        assert!(caller == r.buyer,                "only buyer can cancel");
+        assert!(r.status == EscrowStatus::Funded, "cannot cancel after delivery is marked");
+        assert!(
+            env.ledger().timestamp() < r.deadline,
+            "deadline passed — use refund_after_deadline"
+        );
 
         r.status = EscrowStatus::Cancelled;
         env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
@@ -281,9 +247,35 @@ impl OrchidEscrow {
         emit(&env, "escrow_cancelled", escrow_id);
     }
 
+    // ── Refund After Deadline ─────────────────────────────────────────────────
+    /// Buyer protection: if seller NEVER calls mark_delivered and deadline passes,
+    /// buyer can reclaim their funds. Prevents funds being stuck forever.
+    /// Permissionless — anyone can call, but funds always go to buyer.
+    pub fn refund_after_deadline(env: Env, escrow_id: u64) {
+        let mut r = Self::load(&env, escrow_id);
+
+        // Explicit terminal guard (belt + suspenders — status check below also protects)
+        Self::assert_not_terminal(&r.status);
+        assert!(r.status == EscrowStatus::Funded, "must be Funded — seller may have already delivered");
+        assert!(
+            env.ledger().timestamp() >= r.deadline,
+            "deadline not reached yet"
+        );
+
+        r.status = EscrowStatus::Refunded;
+        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+
+        token::Client::new(&env, &r.token)
+            .transfer(&env.current_contract_address(), &r.buyer, &r.amount);
+
+        emit(&env, "refund_after_deadline", escrow_id);
+        emit_amount(&env, "funds_sent", escrow_id, r.amount);
+    }
+
     // ── Auto Release After Delivery ───────────────────────────────────────────
     /// If buyer disappears after seller marks delivered, anyone can call this
-    /// after the delivery deadline to release funds to seller.
+    /// after delivery_deadline to release funds to seller.
+    /// Permissionless — anyone can trigger, but funds always go to seller.
     pub fn auto_release_after_delivery(env: Env, escrow_id: u64) {
         let mut r = Self::load(&env, escrow_id);
 
@@ -300,44 +292,35 @@ impl OrchidEscrow {
         emit(&env, "auto_released_after_delivery", escrow_id);
     }
 
-    // ── Auto Release ──────────────────────────────────────────────────────────
-    /// Main deadline fallback — if buyer never confirmed and seller never
-    /// marked delivered, anyone can call after deadline to pay seller.
-    pub fn auto_release(env: Env, escrow_id: u64) {
-        let mut r = Self::load(&env, escrow_id);
-
-        assert!(
-            r.status == EscrowStatus::Funded || r.status == EscrowStatus::Delivered,
-            "must be Funded or Delivered"
-        );
-        assert!(
-            env.ledger().timestamp() >= r.deadline,
-            "main deadline not reached yet"
-        );
-
-        r.status = EscrowStatus::AutoReleased;
-        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
-
-        Self::pay_seller(&env, &r);
-        emit(&env, "auto_released", escrow_id);
-    }
-
     // ── Dispute ───────────────────────────────────────────────────────────────
     /// Either party raises a dispute. Works from Funded or Delivered state.
+    /// Requires arbitrator to be set at creation.
+    /// If status is Delivered, dispute must be raised before delivery_deadline
+    /// to prevent last-second griefing after seller has already delivered.
     pub fn dispute(env: Env, escrow_id: u64, caller: Address) {
         caller.require_auth();
 
         let mut r = Self::load(&env, escrow_id);
 
+        Self::assert_not_terminal(&r.status);
         assert!(
             r.status == EscrowStatus::Funded || r.status == EscrowStatus::Delivered,
-            "must be Funded or Delivered"
+            "must be Funded or Delivered to dispute"
         );
         assert!(
             caller == r.buyer || caller == r.seller,
             "only buyer or seller can raise a dispute"
         );
         assert!(r.arbitrator.is_some(), "no arbitrator set for this escrow");
+
+        // Anti-grief: if already Delivered, dispute window closes at delivery_deadline
+        // Prevents buyer from raising dispute at the last second after seller delivered
+        if r.status == EscrowStatus::Delivered && r.delivery_deadline > 0 {
+            assert!(
+                env.ledger().timestamp() < r.delivery_deadline,
+                "dispute window closed — delivery deadline passed, use auto_release_after_delivery"
+            );
+        }
 
         r.status = EscrowStatus::Disputed;
         r.disputed_by = Some(caller.clone());
@@ -347,6 +330,7 @@ impl OrchidEscrow {
     }
 
     // ── Arbitrate ─────────────────────────────────────────────────────────────
+    /// Arbitrator resolves a dispute.
     pub fn arbitrate(
         env:       Env,
         escrow_id: u64,
@@ -374,6 +358,7 @@ impl OrchidEscrow {
                 token::Client::new(&env, &r.token)
                     .transfer(&env.current_contract_address(), &r.buyer, &r.amount);
                 emit(&env, "arbitrated_refund", escrow_id);
+                emit_amount(&env, "funds_sent", escrow_id, r.amount);
             }
         }
     }
@@ -400,6 +385,21 @@ impl OrchidEscrow {
         env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
     }
 
+    /// Fetch a batch of escrows by ID range for dashboard display.
+    /// Both buyer and seller can see their escrows.
+    pub fn get_escrows_range(env: Env, start_id: u64, end_id: u64) -> soroban_sdk::Vec<EscrowRecord> {
+        let mut results = soroban_sdk::Vec::new(&env);
+        let total: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
+        let end = end_id.min(total);
+        for i in start_id..=end {
+            if let Some(record) = env.storage().persistent()
+                .get::<DataKey, EscrowRecord>(&DataKey::Escrow(i)) {
+                results.push_back(record);
+            }
+        }
+        results
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // INTERNAL HELPERS
     // ─────────────────────────────────────────────────────────────────────────
@@ -411,6 +411,18 @@ impl OrchidEscrow {
             .unwrap_or_else(|| panic!("escrow not found"))
     }
 
+    /// Terminal state guard — prevents any operation on completed escrows.
+    fn assert_not_terminal(status: &EscrowStatus) {
+        assert!(
+            *status != EscrowStatus::Released   &&
+            *status != EscrowStatus::AutoReleased &&
+            *status != EscrowStatus::Refunded   &&
+            *status != EscrowStatus::Cancelled,
+            "escrow already completed"
+        );
+    }
+
+    /// Pay seller minus platform fee. Fee goes to admin. Emits funds_sent.
     fn pay_seller(env: &Env, r: &EscrowRecord) {
         let client = token::Client::new(env, &r.token);
         let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
@@ -432,7 +444,6 @@ impl OrchidEscrow {
             }
         }
 
-        // Emit funds_sent event for verification
         emit_amount(env, "funds_sent", r.escrow_id, r.amount);
     }
 }

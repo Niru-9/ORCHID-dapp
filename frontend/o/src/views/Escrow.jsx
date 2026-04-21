@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useWalletStore } from '../store/wallet';
 import { useToast } from '../components/Toast';
+import { getEscrowsForUser, contractMarkDelivered, contractConfirmDelivery } from '../store/escrow_contract';
 
 export default function Escrow() {
   const { createEscrow, releaseEscrow, refundEscrow, disputeEscrow, autoReleaseEscrow, checkEscrowExpiry, transactions, address } = useWalletStore();
@@ -14,12 +15,31 @@ export default function Escrow() {
   const [expiryDays, setExpiryDays] = useState('7');
   const [isCreating, setIsCreating] = useState(false);
   const [processingId, setProcessingId] = useState(null);
+  // On-chain escrows visible to this user (as buyer OR seller)
+  const [onChainEscrows, setOnChainEscrows] = useState([]);
+  const [loadingOnChain, setLoadingOnChain] = useState(false);
 
   useEffect(() => {
     checkEscrowExpiry();
     const interval = setInterval(checkEscrowExpiry, 60000);
     return () => clearInterval(interval);
   }, [checkEscrowExpiry]);
+
+  // Fetch on-chain escrows for this user (both buyer and seller roles)
+  useEffect(() => {
+    if (!address) return;
+    const fetchOnChain = async () => {
+      setLoadingOnChain(true);
+      try {
+        const escrows = await getEscrowsForUser(address);
+        setOnChainEscrows(escrows || []);
+      } catch (_) {}
+      setLoadingOnChain(false);
+    };
+    fetchOnChain();
+    const t = setInterval(fetchOnChain, 30_000);
+    return () => clearInterval(t);
+  }, [address]);
 
   const handleCreateEscrow = async (e) => {
     e.preventDefault();
@@ -201,7 +221,15 @@ export default function Escrow() {
         </div>
 
         <div className="card">
-          <h3 className="card-title">Active Escrow Contracts</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <h3 className="card-title" style={{ margin: 0 }}>Active Escrow Contracts</h3>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              {loadingOnChain ? 'Syncing from chain...' : `${onChainEscrows.length} on-chain`}
+            </div>
+          </div>
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '1rem', lineHeight: 1.6 }}>
+            All escrows where you are the buyer or seller — visible to both parties.
+          </p>
           <div className="table-container" style={{ maxHeight: '500px', overflowY: 'auto' }}>
             <table>
               <thead>
@@ -319,6 +347,113 @@ export default function Escrow() {
           {escrowTxs.some(tx => tx.description) && (
             <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
               <strong style={{ color: 'var(--text-main)' }}>Latest Memo:</strong> {escrowTxs.find(tx => tx.description)?.description}
+            </div>
+          )}
+
+          {/* ── On-chain escrows (visible to both buyer and seller) ── */}
+          {onChainEscrows.length > 0 && (
+            <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1.25rem' }}>
+              <div style={{ fontSize: '0.72rem', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: '0.75rem' }}>
+                On-Chain Escrows (Your Role)
+              </div>
+              <div className="table-container" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Your Role</th>
+                      <th>Amount</th>
+                      <th>Counterparty</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {onChainEscrows.map((e, i) => {
+                      const isBuyer = e.buyer === address;
+                      const role = isBuyer ? 'Buyer' : 'Seller';
+                      const counterparty = isBuyer ? e.seller : e.buyer;
+                      const amountXlm = (Number(e.amount) / 1e7).toFixed(2);
+                      const statusColor = {
+                        Funded: '#38bdf8', Delivered: '#f59e0b',
+                        Released: '#22C55E', AutoReleased: '#22C55E',
+                        Refunded: '#a855f7', Cancelled: '#6b7280', Disputed: '#ef4444',
+                      }[e.status] || 'var(--text-muted)';
+
+                      return (
+                        <tr key={i}>
+                          <td style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.75rem', color: 'var(--accent-glow)' }}>
+                            <a href={`https://stellar.expert/explorer/testnet/contract/${import.meta.env.VITE_ESCROW_CONTRACT_ID}`} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
+                              #{e.escrow_id}
+                            </a>
+                          </td>
+                          <td>
+                            <span style={{ padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 700, background: isBuyer ? 'rgba(59,130,246,0.1)' : 'rgba(34,197,94,0.1)', color: isBuyer ? '#60a5fa' : '#4ade80' }}>
+                              {role}
+                            </span>
+                          </td>
+                          <td style={{ fontWeight: 600 }}>{amountXlm} XLM</td>
+                          <td style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                            {counterparty ? `${counterparty.slice(0,6)}...${counterparty.slice(-4)}` : '—'}
+                          </td>
+                          <td>
+                            <span style={{ padding: '0.25rem 0.6rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 600, background: `${statusColor}18`, color: statusColor }}>
+                              {e.status}
+                            </span>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                              {/* Seller: mark delivered */}
+                              {!isBuyer && e.status === 'Funded' && (
+                                <button
+                                  className="action-btn"
+                                  style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', background: 'rgba(245,158,11,0.1)', borderColor: 'rgba(245,158,11,0.3)', color: '#f59e0b' }}
+                                  disabled={processingId === e.escrow_id}
+                                  onClick={async () => {
+                                    setProcessingId(e.escrow_id);
+                                    try {
+                                      await contractMarkDelivered(address, e.escrow_id);
+                                      toast.success('Delivery marked! Buyer can now confirm.');
+                                      const updated = await getEscrowsForUser(address);
+                                      setOnChainEscrows(updated || []);
+                                    } catch (err) { toast.error(err.message); }
+                                    setProcessingId(null);
+                                  }}
+                                >
+                                  {processingId === e.escrow_id ? '...' : 'Mark Delivered'}
+                                </button>
+                              )}
+                              {/* Buyer: confirm delivery */}
+                              {isBuyer && e.status === 'Delivered' && (
+                                <button
+                                  className="action-btn"
+                                  style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', background: 'rgba(34,197,94,0.1)', borderColor: 'rgba(34,197,94,0.3)', color: '#4ade80' }}
+                                  disabled={processingId === e.escrow_id}
+                                  onClick={async () => {
+                                    setProcessingId(e.escrow_id);
+                                    try {
+                                      await contractConfirmDelivery(address, e.escrow_id);
+                                      toast.txSuccess('Payment released to seller!', '');
+                                      const updated = await getEscrowsForUser(address);
+                                      setOnChainEscrows(updated || []);
+                                    } catch (err) { toast.error(err.message); }
+                                    setProcessingId(null);
+                                  }}
+                                >
+                                  {processingId === e.escrow_id ? '...' : 'Confirm & Pay'}
+                                </button>
+                              )}
+                              {(e.status === 'Released' || e.status === 'AutoReleased' || e.status === 'Refunded' || e.status === 'Cancelled') && (
+                                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Settled</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
