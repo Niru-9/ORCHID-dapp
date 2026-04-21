@@ -1,32 +1,38 @@
-//! Orchid Escrow — Production-Grade Soroban Contract
+//! Orchid Escrow — Soroban Contract v3
 //!
 //! ─── STATE MACHINE ───────────────────────────────────────────────────────────
 //!
-//!   CREATED
-//!     └─ fund()                → FUNDED
+//!   create_escrow()          → FUNDED   (buyer creates + funds atomically)
 //!
 //!   FUNDED
-//!     ├─ approve(buyer)        → records buyer approval
-//!     ├─ approve(seller)       → records seller approval
-//!     │   both approved        → RELEASED (funds → seller)
-//!     ├─ cancel()              → CANCELLED (only before deadline, only buyer)
-//!     ├─ dispute()             → DISPUTED  (either party)
-//!     └─ auto_release()        → AUTO_RELEASED (deadline passed)
+//!     ├─ mark_delivered(seller) → DELIVERED  (seller signals delivery)
+//!     ├─ cancel(buyer)          → CANCELLED  (only before delivery)
+//!     ├─ dispute(either)        → DISPUTED   (requires arbitrator)
+//!     └─ auto_release()         → AUTO_RELEASED (main deadline passed)
+//!
+//!   DELIVERED
+//!     ├─ confirm_delivery(buyer) → RELEASED      (buyer confirms → seller paid)
+//!     ├─ dispute(either)         → DISPUTED
+//!     └─ auto_release_after_delivery() → AUTO_RELEASED (buyer timeout)
 //!
 //!   DISPUTED
-//!     ├─ arbitrate(Release)    → RELEASED  (arbitrator decides for seller)
-//!     └─ arbitrate(Refund)     → REFUNDED  (arbitrator decides for buyer)
+//!     ├─ arbitrate(Release) → RELEASED
+//!     └─ arbitrate(Refund)  → REFUNDED
 //!
 //!   TERMINAL: RELEASED | AUTO_RELEASED | REFUNDED | CANCELLED
+//!
+//! ─── CHANGES FROM v2 ─────────────────────────────────────────────────────────
+//!   1. Added Delivered state — seller marks delivery before buyer can confirm
+//!   2. confirm_delivery() now requires Delivered state (prevents random release)
+//!   3. cancel() blocked after delivery (prevents buyer abuse)
+//!   4. auto_release_after_delivery() — if buyer disappears after delivery
+//!   5. funds_sent event emitted on every payout for verification
 //!
 //! ─── SECURITY ────────────────────────────────────────────────────────────────
 //!   - State updated BEFORE every token transfer (reentrancy guard)
 //!   - require_auth() on every mutating call
-//!   - Role checks: only buyer/seller/arbitrator can call their functions
 //!   - Terminal states reject all further calls
-//!   - No unilateral release: both parties must approve OR arbitrator decides
-//!   - Overflow-safe: i128 arithmetic
-//!   - Optional platform fee (max 5%) on release only
+//!   - Overflow-safe: checked arithmetic
 
 #![no_std]
 
@@ -51,8 +57,8 @@ pub enum DataKey {
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
 pub enum EscrowStatus {
-    Created,
     Funded,
+    Delivered,    // seller has marked delivery, awaiting buyer confirmation
     Disputed,
     Released,
     AutoReleased,
@@ -74,22 +80,19 @@ pub enum ArbitratorDecision {
 #[contracttype]
 #[derive(Clone)]
 pub struct EscrowRecord {
-    pub escrow_id:        u64,
-    pub buyer:            Address,
-    pub seller:           Address,
-    /// Optional arbitrator — if None, disputes cannot be raised
-    pub arbitrator:       Option<Address>,
-    pub token:            Address,
-    pub amount:           i128,
-    pub status:           EscrowStatus,
-    /// Ledger timestamp after which auto_release() pays seller
-    pub deadline:         u64,
-    /// Buyer has approved release
-    pub buyer_approved:   bool,
-    /// Seller has approved release
-    pub seller_approved:  bool,
-    /// Who raised the dispute
-    pub disputed_by:      Option<Address>,
+    pub escrow_id:    u64,
+    pub buyer:        Address,
+    pub seller:       Address,
+    pub arbitrator:   Option<Address>,
+    pub token:        Address,
+    pub amount:       i128,
+    pub status:       EscrowStatus,
+    /// Main deadline — auto_release() pays seller if buyer never confirms
+    pub deadline:     u64,
+    /// Delivery deadline — auto_release_after_delivery() fires after this
+    /// Set to deadline by default; can be shorter for faster resolution
+    pub delivery_deadline: u64,
+    pub disputed_by:  Option<Address>,
 }
 
 // ─── Events ───────────────────────────────────────────────────────────────────
@@ -98,6 +101,13 @@ fn emit(env: &Env, topic: &str, escrow_id: u64) {
     env.events().publish(
         (Symbol::new(env, topic), escrow_id),
         escrow_id,
+    );
+}
+
+fn emit_amount(env: &Env, topic: &str, escrow_id: u64, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, topic), escrow_id),
+        amount,
     );
 }
 
@@ -110,7 +120,6 @@ pub struct OrchidEscrow;
 impl OrchidEscrow {
 
     // ── Init ──────────────────────────────────────────────────────────────────
-    /// Deploy once. fee_bps = 0 means no platform fee (max 500 = 5%).
     pub fn init(env: Env, admin: Address, fee_bps: u32) {
         admin.require_auth();
         if env.storage().instance().has(&DataKey::Admin) {
@@ -122,26 +131,27 @@ impl OrchidEscrow {
         env.storage().instance().set(&DataKey::Counter, &0u64);
     }
 
-    // ── Create ────────────────────────────────────────────────────────────────
-    /// Buyer creates an escrow. Returns escrow_id.
-    /// arbitrator = None means no dispute resolution available.
-    /// deadline = ledger timestamp after which auto_release() can be called.
+    // ── Create + Fund (atomic) ────────────────────────────────────────────────
+    /// Buyer creates the escrow AND funds it in a single signed transaction.
+    /// delivery_window_secs: how long after delivery buyer has to confirm
+    ///   before auto_release_after_delivery() can fire (e.g. 3 days = 259200)
     pub fn create_escrow(
-        env:        Env,
-        buyer:      Address,
-        seller:     Address,
-        arbitrator: Option<Address>,
-        token:      Address,
-        amount:     i128,
-        deadline:   u64,
+        env:                  Env,
+        buyer:                Address,
+        seller:               Address,
+        arbitrator:           Option<Address>,
+        token:                Address,
+        amount:               i128,
+        deadline:             u64,
+        delivery_window_secs: u64,
     ) -> u64 {
         buyer.require_auth();
 
-        assert!(amount > 0,                              "amount must be positive");
-        assert!(buyer != seller,                         "buyer and seller must differ");
-        assert!(deadline > env.ledger().timestamp(),     "deadline must be in the future");
+        assert!(amount > 0,                          "amount must be positive");
+        assert!(buyer != seller,                     "buyer and seller must differ");
+        assert!(deadline > env.ledger().timestamp(), "deadline must be in the future");
+        assert!(delivery_window_secs > 0,            "delivery window must be positive");
 
-        // Arbitrator must not be buyer or seller
         if let Some(ref arb) = arbitrator {
             assert!(arb != &buyer && arb != &seller, "arbitrator must be a third party");
         }
@@ -151,87 +161,116 @@ impl OrchidEscrow {
         env.storage().instance().set(&DataKey::Counter, &next_id);
 
         let record = EscrowRecord {
-            escrow_id:      next_id,
-            buyer:          buyer.clone(),
-            seller:         seller.clone(),
+            escrow_id:        next_id,
+            buyer:            buyer.clone(),
+            seller:           seller.clone(),
             arbitrator,
-            token,
+            token:            token.clone(),
             amount,
-            status:         EscrowStatus::Created,
+            status:           EscrowStatus::Funded,
             deadline,
-            buyer_approved:  false,
-            seller_approved: false,
-            disputed_by:    None,
+            // delivery_deadline is set when seller calls mark_delivered
+            // stored here as 0 until then
+            delivery_deadline: delivery_window_secs, // window duration, not absolute time
+            disputed_by:      None,
         };
 
+        // State update BEFORE transfer (reentrancy guard)
         env.storage().persistent().set(&DataKey::Escrow(next_id), &record);
+
+        // Fund atomically — buyer signs this transaction
+        token::Client::new(&env, &token)
+            .transfer(&buyer, &env.current_contract_address(), &amount);
+
         emit(&env, "escrow_created", next_id);
+        emit(&env, "escrow_funded", next_id);
+
         next_id
     }
 
-    // ── Fund ──────────────────────────────────────────────────────────────────
-    /// Buyer deposits the agreed amount. Created → Funded.
-    pub fn fund(env: Env, escrow_id: u64, caller: Address) {
+    // ── Mark Delivered ────────────────────────────────────────────────────────
+    /// Seller signals that delivery is complete.
+    /// Funded → Delivered
+    /// After this, buyer has delivery_window_secs to confirm before auto-release.
+    pub fn mark_delivered(env: Env, escrow_id: u64, caller: Address) {
         caller.require_auth();
 
         let mut r = Self::load(&env, escrow_id);
 
-        assert!(caller == r.buyer,                       "only buyer can fund");
-        assert!(r.status == EscrowStatus::Created,       "must be in Created state");
-        assert!(env.ledger().timestamp() < r.deadline,   "deadline has passed");
+        assert!(caller == r.seller,                 "only seller can mark delivered");
+        assert!(r.status == EscrowStatus::Funded,   "must be in Funded state");
 
-        // State update BEFORE transfer
-        r.status = EscrowStatus::Funded;
+        // Set the absolute delivery deadline = now + window
+        let delivery_deadline = env.ledger().timestamp()
+            .checked_add(r.delivery_deadline).expect("overflow");
+        r.delivery_deadline = delivery_deadline;
+        r.status = EscrowStatus::Delivered;
         env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
 
-        token::Client::new(&env, &r.token)
-            .transfer(&r.buyer, &env.current_contract_address(), &r.amount);
-
-        emit(&env, "escrow_funded", escrow_id);
+        emit(&env, "marked_delivered", escrow_id);
     }
 
-    // ── Approve ───────────────────────────────────────────────────────────────
-    /// Either party approves the release.
-    /// When BOTH buyer and seller have approved → funds released to seller.
-    /// This is the dual-approval path — no unilateral release.
+    // ── Confirm Delivery ──────────────────────────────────────────────────────
+    /// Buyer confirms delivery. Requires Delivered state.
+    /// Funds sent to seller immediately.
+    pub fn confirm_delivery(env: Env, escrow_id: u64, caller: Address) {
+        caller.require_auth();
+
+        let mut r = Self::load(&env, escrow_id);
+
+        assert!(caller == r.buyer,                    "only buyer can confirm delivery");
+        // CRITICAL: must be Delivered first — buyer cannot randomly release
+        assert!(r.status == EscrowStatus::Delivered,  "seller must mark delivered first");
+
+        r.status = EscrowStatus::Released;
+        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+
+        Self::pay_seller(&env, &r);
+
+        emit(&env, "escrow_released", escrow_id);
+    }
+
+    // ── Approve (backward-compat alias) ───────────────────────────────────────
+    /// Kept for frontend compatibility.
+    /// Buyer calling approve() after delivery = confirm_delivery.
     pub fn approve(env: Env, escrow_id: u64, caller: Address) {
         caller.require_auth();
 
-        let mut r = Self::load(&env, escrow_id);
+        let r = Self::load(&env, escrow_id);
 
-        assert!(r.status == EscrowStatus::Funded,        "must be in Funded state");
-        assert!(
-            caller == r.buyer || caller == r.seller,
-            "only buyer or seller can approve"
-        );
-
-        if caller == r.buyer  { r.buyer_approved  = true; }
-        if caller == r.seller { r.seller_approved = true; }
-
-        if r.buyer_approved && r.seller_approved {
-            // Both approved — release to seller
+        if caller == r.buyer && r.status == EscrowStatus::Delivered {
+            // Delegate to confirm_delivery
+            let mut r = r;
             r.status = EscrowStatus::Released;
             env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
             Self::pay_seller(&env, &r);
             emit(&env, "escrow_released", escrow_id);
-        } else {
-            // Only one approved so far — save state
+        } else if caller == r.seller && r.status == EscrowStatus::Funded {
+            // Seller calling approve = mark_delivered
+            let delivery_deadline = env.ledger().timestamp()
+                .checked_add(r.delivery_deadline).expect("overflow");
+            let mut r = r;
+            r.delivery_deadline = delivery_deadline;
+            r.status = EscrowStatus::Delivered;
             env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+            emit(&env, "marked_delivered", escrow_id);
+        } else {
             emit(&env, "approval_recorded", escrow_id);
         }
     }
 
     // ── Cancel ────────────────────────────────────────────────────────────────
-    /// Buyer can cancel before the deadline (returns funds to buyer).
-    /// Only valid in Funded state and before deadline.
+    /// Buyer cancels — only allowed in Funded state (before delivery).
+    /// Once seller marks delivered, buyer cannot cancel.
     pub fn cancel(env: Env, escrow_id: u64, caller: Address) {
         caller.require_auth();
 
         let mut r = Self::load(&env, escrow_id);
 
-        assert!(caller == r.buyer,                       "only buyer can cancel");
-        assert!(r.status == EscrowStatus::Funded,        "must be in Funded state");
-        assert!(env.ledger().timestamp() < r.deadline,   "deadline passed — use auto_release");
+        assert!(caller == r.buyer,                  "only buyer can cancel");
+        // Restricted to Funded only — cannot cancel after delivery
+        assert!(r.status == EscrowStatus::Funded,   "cannot cancel after delivery is marked");
+        assert!(env.ledger().timestamp() < r.deadline, "deadline passed — use auto_release");
 
         r.status = EscrowStatus::Cancelled;
         env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
@@ -242,21 +281,63 @@ impl OrchidEscrow {
         emit(&env, "escrow_cancelled", escrow_id);
     }
 
+    // ── Auto Release After Delivery ───────────────────────────────────────────
+    /// If buyer disappears after seller marks delivered, anyone can call this
+    /// after the delivery deadline to release funds to seller.
+    pub fn auto_release_after_delivery(env: Env, escrow_id: u64) {
+        let mut r = Self::load(&env, escrow_id);
+
+        assert!(r.status == EscrowStatus::Delivered, "must be in Delivered state");
+        assert!(
+            env.ledger().timestamp() >= r.delivery_deadline,
+            "delivery deadline not reached yet"
+        );
+
+        r.status = EscrowStatus::AutoReleased;
+        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+
+        Self::pay_seller(&env, &r);
+        emit(&env, "auto_released_after_delivery", escrow_id);
+    }
+
+    // ── Auto Release ──────────────────────────────────────────────────────────
+    /// Main deadline fallback — if buyer never confirmed and seller never
+    /// marked delivered, anyone can call after deadline to pay seller.
+    pub fn auto_release(env: Env, escrow_id: u64) {
+        let mut r = Self::load(&env, escrow_id);
+
+        assert!(
+            r.status == EscrowStatus::Funded || r.status == EscrowStatus::Delivered,
+            "must be Funded or Delivered"
+        );
+        assert!(
+            env.ledger().timestamp() >= r.deadline,
+            "main deadline not reached yet"
+        );
+
+        r.status = EscrowStatus::AutoReleased;
+        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+
+        Self::pay_seller(&env, &r);
+        emit(&env, "auto_released", escrow_id);
+    }
+
     // ── Dispute ───────────────────────────────────────────────────────────────
-    /// Either party can raise a dispute. Funded → Disputed.
-    /// Requires an arbitrator to have been set at creation.
-    /// Once disputed, only the arbitrator can resolve.
+    /// Either party raises a dispute. Works from Funded or Delivered state.
     pub fn dispute(env: Env, escrow_id: u64, caller: Address) {
         caller.require_auth();
 
         let mut r = Self::load(&env, escrow_id);
 
-        assert!(r.status == EscrowStatus::Funded,        "must be in Funded state");
+        assert!(
+            r.status == EscrowStatus::Funded || r.status == EscrowStatus::Delivered,
+            "must be Funded or Delivered"
+        );
         assert!(
             caller == r.buyer || caller == r.seller,
             "only buyer or seller can raise a dispute"
         );
-        assert!(r.arbitrator.is_some(),                  "no arbitrator set for this escrow");
+        assert!(r.arbitrator.is_some(), "no arbitrator set for this escrow");
 
         r.status = EscrowStatus::Disputed;
         r.disputed_by = Some(caller.clone());
@@ -266,9 +347,6 @@ impl OrchidEscrow {
     }
 
     // ── Arbitrate ─────────────────────────────────────────────────────────────
-    /// Arbitrator resolves a dispute.
-    /// Release → funds go to seller (with platform fee).
-    /// Refund  → full amount returned to buyer (no fee).
     pub fn arbitrate(
         env:       Env,
         escrow_id: u64,
@@ -279,9 +357,9 @@ impl OrchidEscrow {
 
         let mut r = Self::load(&env, escrow_id);
 
-        assert!(r.status == EscrowStatus::Disputed,      "must be in Disputed state");
+        assert!(r.status == EscrowStatus::Disputed, "must be in Disputed state");
         let arb = r.arbitrator.clone().expect("no arbitrator");
-        assert!(caller == arb,                           "only arbitrator can resolve");
+        assert!(caller == arb, "only arbitrator can resolve");
 
         match decision {
             ArbitratorDecision::Release => {
@@ -300,29 +378,7 @@ impl OrchidEscrow {
         }
     }
 
-    // ── Auto Release ──────────────────────────────────────────────────────────
-    /// Anyone can call after the deadline. Funded → AutoReleased.
-    /// Pays seller (with platform fee). Ensures funds never locked forever.
-    pub fn auto_release(env: Env, escrow_id: u64) {
-        let mut r = Self::load(&env, escrow_id);
-
-        assert!(
-            r.status == EscrowStatus::Funded,
-            "must be in Funded state"
-        );
-        assert!(
-            env.ledger().timestamp() >= r.deadline,
-            "deadline not reached yet"
-        );
-
-        r.status = EscrowStatus::AutoReleased;
-        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
-
-        Self::pay_seller(&env, &r);
-        emit(&env, "auto_released", escrow_id);
-    }
-
-    // ── Admin: Update Fee ─────────────────────────────────────────────────────
+    // ── Admin ─────────────────────────────────────────────────────────────────
     pub fn set_fee(env: Env, new_fee_bps: u32) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -355,7 +411,6 @@ impl OrchidEscrow {
             .unwrap_or_else(|| panic!("escrow not found"))
     }
 
-    /// Pay seller minus platform fee. Fee goes to admin.
     fn pay_seller(env: &Env, r: &EscrowRecord) {
         let client = token::Client::new(env, &r.token);
         let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
@@ -376,18 +431,8 @@ impl OrchidEscrow {
                 client.transfer(&env.current_contract_address(), &admin, &fee);
             }
         }
+
+        // Emit funds_sent event for verification
+        emit_amount(env, "funds_sent", r.escrow_id, r.amount);
     }
 }
-
-// ─── Security Guarantees ─────────────────────────────────────────────────────
-//
-// 1. No unilateral release — both parties must approve OR arbitrator decides
-// 2. Reentrancy — state updated BEFORE every token transfer
-// 3. Role checks — require_auth() + explicit role assertion on every call
-// 4. Terminal states — all terminal states reject further calls
-// 5. Overflow — checked arithmetic on fee calculation
-// 6. Arbitrator neutrality — arbitrator cannot be buyer or seller
-// 7. Dispute requires arbitrator — no disputes on escrows without one
-// 8. Cancel window — buyer can only cancel before deadline
-// 9. Auto-release — ensures funds never locked indefinitely
-// 10. Fee cap — max 5%, enforced at init and set_fee

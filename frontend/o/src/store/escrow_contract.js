@@ -140,13 +140,14 @@ export async function contractCreateEscrow(
 ) {
   const now      = Math.floor(Date.now() / 1000);
   const deadline = now + parseInt(expiryDays) * 86400;
+  // Delivery window: buyer has 3 days after seller marks delivered to confirm
+  const deliveryWindowSecs = 3 * 86400;
 
-  // Arbitrator is Option<Address> — None = void, Some = address
   const arbitratorArg = arbitratorAddress
     ? optionSome(addressVal(arbitratorAddress))
     : optionNone();
 
-  // Step 1: create_escrow
+  // create_escrow now funds atomically — no separate fund() call
   const createResult = await invokeContract(buyerAddress, 'create_escrow', [
     addressVal(buyerAddress),
     addressVal(sellerAddress),
@@ -154,33 +155,34 @@ export async function contractCreateEscrow(
     addressVal(NATIVE_TOKEN),
     i128Val(amountXlm),
     u64Val(deadline),
+    u64Val(deliveryWindowSecs),
   ]);
 
   const escrowId = scValToNative(createResult.result);
+  return { escrow_id: escrowId, hash: createResult.hash };
+}
 
-  // Step 2: fund (transfers XLM from buyer → contract)
-  const fundResult = await invokeContract(buyerAddress, 'fund', [
+/**
+ * mark_delivered — seller signals delivery is complete.
+ * Must be called before buyer can confirm.
+ */
+export async function contractMarkDelivered(sellerAddress, escrowId) {
+  return invokeContract(sellerAddress, 'mark_delivered', [
+    u64Val(escrowId),
+    addressVal(sellerAddress),
+  ]);
+}
+
+/**
+ * confirm_delivery — buyer confirms delivery. Requires Delivered state.
+ * Funds sent to seller immediately.
+ */
+export async function contractConfirmDelivery(buyerAddress, escrowId) {
+  return invokeContract(buyerAddress, 'confirm_delivery', [
     u64Val(escrowId),
     addressVal(buyerAddress),
   ]);
-
-  return { escrow_id: escrowId, hash: fundResult.hash };
 }
-
-/**
- * approve — either buyer or seller approves release.
- * When both approve, funds go to seller automatically.
- */
-export async function contractApprove(callerAddress, escrowId) {
-  return invokeContract(callerAddress, 'approve', [
-    u64Val(escrowId),
-    addressVal(callerAddress),
-  ]);
-}
-
-/**
- * cancel — buyer cancels before deadline, gets refund.
- */
 export async function contractCancel(buyerAddress, escrowId) {
   return invokeContract(buyerAddress, 'cancel', [
     u64Val(escrowId),
@@ -224,19 +226,23 @@ export async function contractAutoRelease(callerAddress, escrowId) {
   ]);
 }
 
-// ── Legacy aliases (keep wallet.js working without changes) ──────────────────
-
-/** Alias: buyer confirms delivery = buyer approves */
-export async function contractConfirmDelivery(buyerAddress, escrowId) {
-  return contractApprove(buyerAddress, escrowId);
+/**
+ * auto_release_after_delivery — if buyer disappears after delivery.
+ */
+export async function contractAutoReleaseAfterDelivery(callerAddress, escrowId) {
+  return invokeContract(callerAddress, 'auto_release_after_delivery', [
+    u64Val(escrowId),
+  ]);
 }
 
-/** Alias: request_refund = cancel (buyer) */
+// ── Legacy aliases ────────────────────────────────────────────────────────────
+
+/** Alias: request_refund = cancel (buyer before delivery) */
 export async function contractRequestRefund(buyerAddress, escrowId) {
   return contractCancel(buyerAddress, escrowId);
 }
 
-/** Alias: approve_refund = cancel (buyer) — same outcome */
+/** Alias: approve_refund = cancel */
 export async function contractApproveRefund(buyerAddress, escrowId) {
   return contractCancel(buyerAddress, escrowId);
 }

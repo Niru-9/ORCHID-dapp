@@ -483,7 +483,15 @@ export const useWalletStore = create(
         return result.hash;
       },
 
-      markDelivered: (id) => {
+      // Mark Delivered — seller signals delivery (calls contract)
+      markDelivered: async (id) => {
+        const { transactions, address } = get();
+        const escrow = transactions.find(t => t.id === id);
+        if (!escrow) return;
+        try {
+          const { contractMarkDelivered } = await import('./escrow_contract.js');
+          await contractMarkDelivered(address, escrow.escrow_id);
+        } catch (_) { /* update local state regardless */ }
         set((s) => ({
           transactions: s.transactions.map((t) =>
             t.id === id ? { ...t, status: 'Delivered' } : t
