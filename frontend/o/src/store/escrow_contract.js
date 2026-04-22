@@ -128,7 +128,7 @@ async function readOnly(method, args) {
 
 /**
  * Create escrow + fund in one flow.
- * arbitratorAddress = null for no arbitrator.
+ * arbitrators = array of 3-7 arbitrator addresses (must be odd number)
  * Returns { escrow_id, hash }
  */
 export async function contractCreateEscrow(
@@ -136,22 +136,23 @@ export async function contractCreateEscrow(
   sellerAddress,
   amountXlm,
   expiryDays,
-  arbitratorAddress = null
+  arbitrators = []
 ) {
   const now      = Math.floor(Date.now() / 1000);
   const deadline = now + parseInt(expiryDays) * 86400;
   // Delivery window: buyer has 3 days after seller marks delivered to confirm
   const deliveryWindowSecs = 3 * 86400;
 
-  const arbitratorArg = arbitratorAddress
-    ? optionSome(addressVal(arbitratorAddress))
-    : optionNone();
+  // Convert arbitrators array to Soroban Vec
+  const arbitratorsVec = xdr.ScVal.scvVec(
+    arbitrators.map(addr => addressVal(addr))
+  );
 
   // create_escrow now funds atomically — no separate fund() call
   const createResult = await invokeContract(buyerAddress, 'create_escrow', [
     addressVal(buyerAddress),
     addressVal(sellerAddress),
-    arbitratorArg,
+    arbitratorsVec,
     addressVal(NATIVE_TOKEN),
     i128Val(amountXlm),
     u64Val(deadline),
@@ -201,8 +202,43 @@ export async function contractDispute(callerAddress, escrowId) {
 }
 
 /**
+ * vote — arbitrator casts their vote on a disputed escrow.
+ * decision: 'Release' or 'Refund'
+ */
+export async function contractVote(arbitratorAddress, escrowId, decision) {
+  const decisionVal = xdr.ScVal.scvVec([
+    xdr.ScVal.scvSymbol(decision === 'Release' ? 'Release' : 'Refund'),
+  ]);
+
+  return invokeContract(arbitratorAddress, 'vote', [
+    u64Val(escrowId),
+    addressVal(arbitratorAddress),
+    decisionVal,
+  ]);
+}
+
+/**
+ * finalize — finalize dispute after majority is reached.
+ */
+export async function contractFinalize(callerAddress, escrowId) {
+  return invokeContract(callerAddress, 'finalize', [
+    u64Val(escrowId),
+  ]);
+}
+
+/**
+ * force_finalize — force finalize if arbitration deadline passed.
+ */
+export async function contractForceFinalize(callerAddress, escrowId) {
+  return invokeContract(callerAddress, 'force_finalize', [
+    u64Val(escrowId),
+  ]);
+}
+
+/**
  * arbitrate — arbitrator resolves dispute.
  * decision: 'Release' (pay seller) or 'Refund' (pay buyer)
+ * DEPRECATED: Use vote() + finalize() instead
  */
 export async function contractArbitrate(arbitratorAddress, escrowId, decision) {
   // ArbitratorDecision is a Soroban enum — encode as scvVec with symbol tag
@@ -260,6 +296,22 @@ export async function contractEscrowCount() {
 
 export async function contractGetFeeBps() {
   return readOnly('get_fee_bps', []);
+}
+
+export async function contractGetVotes(escrowId) {
+  return readOnly('get_votes', [u64Val(escrowId)]);
+}
+
+export async function contractGetRole(userAddress, escrowId) {
+  return readOnly('get_role', [addressVal(userAddress), u64Val(escrowId)]);
+}
+
+export async function contractGetUserEscrows(userAddress) {
+  return readOnly('get_user_escrows', [addressVal(userAddress)]);
+}
+
+export async function contractGetActiveEscrows() {
+  return readOnly('get_active_escrows', []);
 }
 
 /**

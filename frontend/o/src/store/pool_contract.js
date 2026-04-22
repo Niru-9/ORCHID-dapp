@@ -205,3 +205,13 @@ export async function getFD(addr, fdId)           { return readOnly('get_fd', [a
 export async function getSupplyPosition(addr)     { return readOnly('get_supply_position', [addrVal(addr)]); }
 export async function getHealthInfo(addr)         { return readOnly('get_health_info', [addrVal(addr)]); }
 export async function getProtocolFees()           { return readOnly('get_protocol_fees', []); }
+
+// ── New UI Helpers (Demo-Ready) ───────────────────────────────────────────────
+
+export async function getUserLoans(addr)          { return readOnly('get_user_loans', [addrVal(addr)]); }
+export async function getDashboardData()          { return readOnly('get_dashboard_data', []); }
+export async function getInsuranceStatus()        { return readOnly('get_insurance_status', []); }
+export async function maxBorrowable(addr)         { return readOnly('max_borrowable', [addrVal(addr)]); }
+export async function expectedInterest(loanId, addr) { 
+  return readOnly('expected_interest', [u64Val(loanId), addrVal(addr)]); 
+}

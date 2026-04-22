@@ -45,9 +45,6 @@ pub enum DataKey {
     Counter,
     Admin,
     FeeBps,
-    DisputeFee,
-    Paused,
-    Vote(u64, Address), // (escrow_id, arbitrator) -> ArbitratorDecision
 }
 
 // ─── State Machine ────────────────────────────────────────────────────────────
@@ -81,7 +78,7 @@ pub struct EscrowRecord {
     pub escrow_id:            u64,
     pub buyer:                Address,
     pub seller:               Address,
-    pub arbitrators:          soroban_sdk::Vec<Address>, // Panel instead of single arbitrator
+    pub arbitrator:           Option<Address>,
     pub token:                Address,
     pub amount:               i128,
     pub status:               EscrowStatus,
@@ -92,9 +89,6 @@ pub struct EscrowRecord {
     /// Absolute timestamp set when seller calls mark_delivered (0 until then)
     pub delivery_deadline:    u64,
     pub disputed_by:          Option<Address>,
-    pub votes_release:        u32, // Count of votes for Release
-    pub votes_refund:         u32, // Count of votes for Refund
-    pub dispute_deadline:     u64, // Arbitration timeout deadline
 }
 
 // ─── Events ───────────────────────────────────────────────────────────────────
@@ -110,13 +104,6 @@ fn emit_amount(env: &Env, topic: &str, escrow_id: u64, amount: i128) {
     env.events().publish(
         (Symbol::new(env, topic), escrow_id),
         amount,
-    );
-}
-
-fn emit_status_change(env: &Env, escrow_id: u64, old_status: &EscrowStatus, new_status: &EscrowStatus) {
-    env.events().publish(
-        (Symbol::new(env, "status_changed"), escrow_id),
-        (old_status.clone(), new_status.clone()),
     );
 }
 
@@ -138,8 +125,6 @@ impl OrchidEscrow {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
         env.storage().instance().set(&DataKey::Counter, &0u64);
-        env.storage().instance().set(&DataKey::DisputeFee, &1_000_000i128); // Anti-spam
-        env.storage().instance().set(&DataKey::Paused, &false);
     }
 
     // ── Create + Fund (atomic) ────────────────────────────────────────────────
@@ -150,33 +135,21 @@ impl OrchidEscrow {
         env:                  Env,
         buyer:                Address,
         seller:               Address,
-        arbitrators:          soroban_sdk::Vec<Address>, // Panel of arbitrators
+        arbitrator:           Option<Address>,
         token:                Address,
         amount:               i128,
         deadline:             u64,
         delivery_window_secs: u64,
     ) -> u64 {
         buyer.require_auth();
-        Self::assert_not_paused(&env);
 
         assert!(amount > 0,                          "amount must be positive");
         assert!(buyer != seller,                     "buyer and seller must differ");
         assert!(deadline > env.ledger().timestamp(), "deadline must be in the future");
         assert!(delivery_window_secs > 0,            "delivery window must be positive");
-        assert!(arbitrators.len() >= 3,              "minimum 3 arbitrators required");
-        assert!(arbitrators.len() <= 7,              "too many arbitrators");
-        assert!(arbitrators.len() % 2 == 1,          "arbitrator count must be odd for majority");
 
-        // Verify all arbitrators are third parties and no duplicates
-        for i in 0..arbitrators.len() {
-            let arb_i = arbitrators.get(i).unwrap();
-            assert!(arb_i != buyer && arb_i != seller, "arbitrator must be a third party");
-            
-            // Check for duplicates
-            for j in (i + 1)..arbitrators.len() {
-                let arb_j = arbitrators.get(j).unwrap();
-                assert!(arb_i != arb_j, "duplicate arbitrator");
-            }
+        if let Some(ref arb) = arbitrator {
+            assert!(arb != &buyer && arb != &seller, "arbitrator must be a third party");
         }
 
         let id: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
@@ -187,7 +160,7 @@ impl OrchidEscrow {
             escrow_id:            next_id,
             buyer:                buyer.clone(),
             seller:               seller.clone(),
-            arbitrators,
+            arbitrator,
             token:                token.clone(),
             amount,
             status:               EscrowStatus::Funded,
@@ -195,9 +168,6 @@ impl OrchidEscrow {
             delivery_window_secs, // duration stored separately
             delivery_deadline:    0, // set when seller calls mark_delivered
             disputed_by:          None,
-            votes_release:        0,
-            votes_refund:         0,
-            dispute_deadline:     0,
         };
 
         // State update BEFORE transfer (reentrancy guard)
@@ -228,12 +198,10 @@ impl OrchidEscrow {
         let delivery_deadline = env.ledger().timestamp()
             .checked_add(r.delivery_window_secs).expect("overflow");
 
-        let old_status = r.status.clone();
         r.delivery_deadline = delivery_deadline;
         r.status = EscrowStatus::Delivered;
         env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
 
-        emit_status_change(&env, escrow_id, &old_status, &r.status);
         emit(&env, "marked_delivered", escrow_id);
     }
 
@@ -249,12 +217,10 @@ impl OrchidEscrow {
         assert!(caller == r.buyer,                   "only buyer can confirm delivery");
         assert!(r.status == EscrowStatus::Delivered, "seller must mark delivered first");
 
-        let old_status = r.status.clone();
         r.status = EscrowStatus::Released;
         env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
 
         Self::pay_seller(&env, &r);
-        emit_status_change(&env, escrow_id, &old_status, &r.status);
         emit(&env, "escrow_released", escrow_id);
     }
 
@@ -345,7 +311,7 @@ impl OrchidEscrow {
             caller == r.buyer || caller == r.seller,
             "only buyer or seller can raise a dispute"
         );
-        assert!(r.arbitrators.len() > 0, "no arbitrators set for this escrow");
+        assert!(r.arbitrator.is_some(), "no arbitrator set for this escrow");
 
         // Anti-grief: if already Delivered, dispute window closes at delivery_deadline
         // Prevents buyer from raising dispute at the last second after seller delivered
@@ -356,24 +322,16 @@ impl OrchidEscrow {
             );
         }
 
-        // Collect dispute fee (anti-spam)
-        let fee: i128 = env.storage().instance().get(&DataKey::DisputeFee).unwrap_or(0);
-        if fee > 0 {
-            token::Client::new(&env, &r.token)
-                .transfer(&caller, &env.current_contract_address(), &fee);
-        }
-
         r.status = EscrowStatus::Disputed;
         r.disputed_by = Some(caller.clone());
-        r.dispute_deadline = env.ledger().timestamp() + (3 * 24 * 60 * 60); // 3 days
         env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
 
         emit(&env, "escrow_disputed", escrow_id);
     }
 
-    // ── Vote ──────────────────────────────────────────────────────────────────
-    /// Arbitrator casts their vote on a disputed escrow.
-    pub fn vote(
+    // ── Arbitrate ─────────────────────────────────────────────────────────────
+    /// Arbitrator resolves a dispute.
+    pub fn arbitrate(
         env:       Env,
         escrow_id: u64,
         caller:    Address,
@@ -384,89 +342,25 @@ impl OrchidEscrow {
         let mut r = Self::load(&env, escrow_id);
 
         assert!(r.status == EscrowStatus::Disputed, "must be in Disputed state");
-        
-        // Verify caller is in the arbitrator panel
-        let mut is_arbitrator = false;
-        for arb in r.arbitrators.iter() {
-            if arb == caller {
-                is_arbitrator = true;
-                break;
+        let arb = r.arbitrator.clone().expect("no arbitrator");
+        assert!(caller == arb, "only arbitrator can resolve");
+
+        match decision {
+            ArbitratorDecision::Release => {
+                r.status = EscrowStatus::Released;
+                env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+                Self::pay_seller(&env, &r);
+                emit(&env, "arbitrated_release", escrow_id);
+            }
+            ArbitratorDecision::Refund => {
+                r.status = EscrowStatus::Refunded;
+                env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+                token::Client::new(&env, &r.token)
+                    .transfer(&env.current_contract_address(), &r.buyer, &r.amount);
+                emit(&env, "arbitrated_refund", escrow_id);
+                emit_amount(&env, "funds_sent", escrow_id, r.amount);
             }
         }
-        assert!(is_arbitrator, "caller is not an arbitrator for this escrow");
-
-        // Check if already voted
-        let vote_key = DataKey::Vote(escrow_id, caller.clone());
-        assert!(!env.storage().persistent().has(&vote_key), "already voted");
-
-        // Record vote
-        env.storage().persistent().set(&vote_key, &decision);
-
-        // Update vote counts
-        match decision {
-            ArbitratorDecision::Release => r.votes_release += 1,
-            ArbitratorDecision::Refund => r.votes_refund += 1,
-        }
-
-        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
-
-        env.events().publish(
-            (Symbol::new(&env, "vote_cast"), escrow_id),
-            (caller, decision),
-        );
-    }
-
-    // ── Finalize ──────────────────────────────────────────────────────────────
-    /// Finalize the dispute after majority is reached.
-    pub fn finalize(env: Env, escrow_id: u64) {
-        let mut r = Self::load(&env, escrow_id);
-
-        assert!(r.status == EscrowStatus::Disputed, "must be in Disputed state");
-        Self::assert_not_terminal(&r.status); // Prevent double finalization
-
-        let panel_size = r.arbitrators.len();
-        let majority = (panel_size / 2) + 1;
-
-        assert!(
-            r.votes_release >= majority || r.votes_refund >= majority,
-            "majority not reached yet"
-        );
-
-        if r.votes_release >= majority {
-            r.status = EscrowStatus::Released;
-            env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
-            Self::pay_seller(&env, &r);
-            emit(&env, "arbitrated_release", escrow_id);
-        } else {
-            r.status = EscrowStatus::Refunded;
-            env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
-            token::Client::new(&env, &r.token)
-                .transfer(&env.current_contract_address(), &r.buyer, &r.amount);
-            emit(&env, "arbitrated_refund", escrow_id);
-            emit_amount(&env, "funds_sent", escrow_id, r.amount);
-        }
-    }
-
-    // ── Force Finalize ────────────────────────────────────────────────────────
-    /// Force finalize if arbitration deadline passed (deadlock protection).
-    pub fn force_finalize(env: Env, escrow_id: u64) {
-        let mut r = Self::load(&env, escrow_id);
-
-        assert!(r.status == EscrowStatus::Disputed, "not disputed");
-        assert!(
-            env.ledger().timestamp() >= r.dispute_deadline,
-            "dispute still active"
-        );
-
-        // Fallback rule: refund buyer
-        r.status = EscrowStatus::Refunded;
-        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
-
-        token::Client::new(&env, &r.token)
-            .transfer(&env.current_contract_address(), &r.buyer, &r.amount);
-        
-        emit(&env, "force_finalized", escrow_id);
-        emit_amount(&env, "funds_sent", escrow_id, r.amount);
     }
 
     // ── Admin ─────────────────────────────────────────────────────────────────
@@ -475,25 +369,6 @@ impl OrchidEscrow {
         admin.require_auth();
         assert!(new_fee_bps <= 500, "fee cannot exceed 5%");
         env.storage().instance().set(&DataKey::FeeBps, &new_fee_bps);
-    }
-
-    pub fn pause(env: Env) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
-        env.storage().instance().set(&DataKey::Paused, &true);
-        env.events().publish((Symbol::new(&env, "paused"),), true);
-    }
-
-    pub fn unpause(env: Env) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
-        env.storage().instance().set(&DataKey::Paused, &false);
-        env.events().publish((Symbol::new(&env, "unpaused"),), false);
-    }
-
-    fn assert_not_paused(env: &Env) {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
-        assert!(!paused, "contract is paused");
     }
 
     // ── Views ─────────────────────────────────────────────────────────────────
@@ -508,78 +383,6 @@ impl OrchidEscrow {
 
     pub fn get_fee_bps(env: Env) -> u32 {
         env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
-    }
-
-    pub fn get_votes(env: Env, escrow_id: u64) -> (u32, u32) {
-        let r = Self::load(&env, escrow_id);
-        (r.votes_release, r.votes_refund)
-    }
-
-    /// Get user's role in an escrow: "buyer", "seller", "arbitrator", or "none"
-    pub fn get_role(env: Env, address: Address, escrow_id: u64) -> Symbol {
-        let r = Self::load(&env, escrow_id);
-        if r.buyer == address {
-            return Symbol::new(&env, "buyer");
-        }
-        if r.seller == address {
-            return Symbol::new(&env, "seller");
-        }
-        for arb in r.arbitrators.iter() {
-            if arb == address {
-                return Symbol::new(&env, "arbitrator");
-            }
-        }
-        Symbol::new(&env, "none")
-    }
-
-    /// Get all escrows for a specific user (as buyer, seller, or arbitrator)
-    pub fn get_user_escrows(env: Env, user: Address) -> soroban_sdk::Vec<EscrowRecord> {
-        let mut results = soroban_sdk::Vec::new(&env);
-        let total: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
-        
-        for i in 1..=total {
-            if let Some(record) = env.storage().persistent()
-                .get::<DataKey, EscrowRecord>(&DataKey::Escrow(i)) {
-                
-                let mut is_participant = record.buyer == user || record.seller == user;
-                
-                if !is_participant {
-                    for arb in record.arbitrators.iter() {
-                        if arb == user {
-                            is_participant = true;
-                            break;
-                        }
-                    }
-                }
-                
-                if is_participant {
-                    results.push_back(record);
-                }
-            }
-        }
-        results
-    }
-
-    /// Get only active (non-terminal) escrows
-    pub fn get_active_escrows(env: Env) -> soroban_sdk::Vec<EscrowRecord> {
-        let mut results = soroban_sdk::Vec::new(&env);
-        let total: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
-        
-        for i in 1..=total {
-            if let Some(record) = env.storage().persistent()
-                .get::<DataKey, EscrowRecord>(&DataKey::Escrow(i)) {
-                
-                let is_active = record.status != EscrowStatus::Released
-                    && record.status != EscrowStatus::AutoReleased
-                    && record.status != EscrowStatus::Refunded
-                    && record.status != EscrowStatus::Cancelled;
-                
-                if is_active {
-                    results.push_back(record);
-                }
-            }
-        }
-        results
     }
 
     /// Fetch a batch of escrows by ID range for dashboard display.
