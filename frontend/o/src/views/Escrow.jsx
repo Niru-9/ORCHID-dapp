@@ -2,7 +2,17 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useWalletStore } from '../store/wallet';
 import { useToast } from '../components/Toast';
-import { getEscrowsForUser, contractMarkDelivered, contractConfirmDelivery } from '../store/escrow_contract';
+import { 
+  getEscrowsForUser, 
+  contractMarkDelivered, 
+  contractConfirmDelivery,
+  contractVote,
+  contractFinalize,
+  contractForceFinalize,
+  contractGetVotes,
+  contractGetRole,
+  contractDispute
+} from '../store/escrow_contract';
 
 export default function Escrow() {
   const { createEscrow, releaseEscrow, refundEscrow, disputeEscrow, autoReleaseEscrow, checkEscrowExpiry, transactions, address } = useWalletStore();
@@ -13,11 +23,14 @@ export default function Escrow() {
   const [asset, setAsset] = useState('XLM');
   const [description, setDescription] = useState('');
   const [expiryDays, setExpiryDays] = useState('7');
+  const [arbitrators, setArbitrators] = useState(['', '', '']); // Min 3 arbitrators
   const [isCreating, setIsCreating] = useState(false);
   const [processingId, setProcessingId] = useState(null);
-  // On-chain escrows visible to this user (as buyer OR seller)
+  // On-chain escrows visible to this user (as buyer OR seller OR arbitrator)
   const [onChainEscrows, setOnChainEscrows] = useState([]);
   const [loadingOnChain, setLoadingOnChain] = useState(false);
+  const [votingEscrow, setVotingEscrow] = useState(null);
+  const [voteDecision, setVoteDecision] = useState('Release');
 
   useEffect(() => {
     checkEscrowExpiry();
@@ -44,15 +57,94 @@ export default function Escrow() {
   const handleCreateEscrow = async (e) => {
     e.preventDefault();
     if (!seller || !amount) return;
+    
+    // Filter out empty arbitrator addresses
+    const validArbitrators = arbitrators.filter(a => a.trim().length > 0);
+    
+    // Validate arbitrator count (must be 3-7 and odd)
+    if (validArbitrators.length < 3) {
+      toast.error('Minimum 3 arbitrators required');
+      return;
+    }
+    if (validArbitrators.length > 7) {
+      toast.error('Maximum 7 arbitrators allowed');
+      return;
+    }
+    if (validArbitrators.length % 2 === 0) {
+      toast.error('Arbitrator count must be odd (3, 5, or 7)');
+      return;
+    }
+    
     setIsCreating(true);
     try {
-      const hash = await createEscrow(seller, amount, asset, description, expiryDays);
-      toast.txSuccess('Escrow created! Funds locked in contract.', hash);
+      const hash = await createEscrow(seller, amount, asset, description, expiryDays, validArbitrators);
+      toast.txSuccess('Escrow created with arbitration panel!', hash);
       setSeller(''); setAmount(''); setDescription('');
+      setArbitrators(['', '', '']); // Reset to 3 empty slots
     } catch (err) {
       toast.error(err.message);
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleVote = async (escrowId, decision) => {
+    setProcessingId(escrowId);
+    try {
+      await contractVote(address, escrowId, decision);
+      toast.success(`Vote cast: ${decision}`);
+      // Refresh escrows
+      const updated = await getEscrowsForUser(address);
+      setOnChainEscrows(updated || []);
+      setVotingEscrow(null);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleFinalize = async (escrowId) => {
+    setProcessingId(escrowId);
+    try {
+      await contractFinalize(address, escrowId);
+      toast.txSuccess('Dispute finalized!', '');
+      const updated = await getEscrowsForUser(address);
+      setOnChainEscrows(updated || []);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleForceFinalize = async (escrowId) => {
+    if (!window.confirm('Force finalize? This will refund the buyer after timeout.')) return;
+    setProcessingId(escrowId);
+    try {
+      await contractForceFinalize(address, escrowId);
+      toast.txSuccess('Force finalized - buyer refunded', '');
+      const updated = await getEscrowsForUser(address);
+      setOnChainEscrows(updated || []);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleDispute = async (escrowId) => {
+    if (!window.confirm('Raise a dispute? This will require arbitrator panel voting.')) return;
+    setProcessingId(escrowId);
+    try {
+      await contractDispute(address, escrowId);
+      toast.success('Dispute raised! Arbitrators will vote.');
+      const updated = await getEscrowsForUser(address);
+      setOnChainEscrows(updated || []);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setProcessingId(null);
     }
   };
 
@@ -188,6 +280,44 @@ export default function Escrow() {
               <label className="form-label">Seller / Recipient Address</label>
               <input type="text" value={seller} onChange={(e) => setSeller(e.target.value)} placeholder="G..." className="form-input mono" required disabled={isCreating} />
             </div>
+            
+            {/* Arbitrator Panel */}
+            <div className="form-group">
+              <label className="form-label">Arbitration Panel (3-7 addresses, odd number)</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {arbitrators.map((arb, idx) => (
+                  <input 
+                    key={idx}
+                    type="text" 
+                    value={arb} 
+                    onChange={(e) => {
+                      const newArbs = [...arbitrators];
+                      newArbs[idx] = e.target.value;
+                      setArbitrators(newArbs);
+                    }} 
+                    placeholder={`Arbitrator ${idx + 1} address (G...)`}
+                    className="form-input mono" 
+                    style={{ fontSize: '0.8rem' }}
+                    disabled={isCreating} 
+                  />
+                ))}
+                {arbitrators.length < 7 && (
+                  <button 
+                    type="button"
+                    onClick={() => setArbitrators([...arbitrators, ''])}
+                    className="action-btn"
+                    style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', alignSelf: 'flex-start' }}
+                    disabled={isCreating}
+                  >
+                    + Add Arbitrator
+                  </button>
+                )}
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                Panel votes by majority. Minimum 3, maximum 7 arbitrators.
+              </div>
+            </div>
+            
             <div className="form-group" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <div>
                 <label className="form-label">Lock Amount</label>
