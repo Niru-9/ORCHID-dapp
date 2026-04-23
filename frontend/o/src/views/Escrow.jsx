@@ -11,7 +11,9 @@ import {
   contractForceFinalize,
   contractGetVotes,
   contractGetRole,
-  contractDispute
+  contractDispute,
+  contractRegisterArbiter,
+  contractGetArbiters,
 } from '../store/escrow_contract';
 
 export default function Escrow() {
@@ -31,6 +33,23 @@ export default function Escrow() {
   const [loadingOnChain, setLoadingOnChain] = useState(false);
   const [votingEscrow, setVotingEscrow] = useState(null);
   const [voteDecision, setVoteDecision] = useState('Release');
+  const [arbiterStake, setArbiterStake] = useState('');
+  const [isRegisteringArbiter, setIsRegisteringArbiter] = useState(false);
+  const [availableArbiters, setAvailableArbiters] = useState([]);
+  const [tab, setTab] = useState('escrows'); // 'escrows' | 'arbiters' | 'become-arbiter'
+
+  // Fetch available arbiters on load
+  useEffect(() => {
+    const fetchArbiters = async () => {
+      try {
+        const list = await contractGetArbiters();
+        setAvailableArbiters(list || []);
+      } catch (_) {}
+    };
+    fetchArbiters();
+    const t = setInterval(fetchArbiters, 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     checkEscrowExpiry();
@@ -148,6 +167,23 @@ export default function Escrow() {
     }
   };
 
+  const handleRegisterArbiter = async (e) => {
+    e.preventDefault();
+    if (!arbiterStake) return;
+    setIsRegisteringArbiter(true);
+    try {
+      await contractRegisterArbiter(address, arbiterStake);
+      toast.success(`Registered as arbiter with ${arbiterStake} XLM stake!`);
+      setArbiterStake('');
+      const list = await contractGetArbiters();
+      setAvailableArbiters(list || []);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setIsRegisteringArbiter(false);
+    }
+  };
+
   // Mark Delivered = confirm delivery AND release funds to seller immediately
   const handleMarkDelivered = async (id) => {
     const tx = transactions.find(t => t.id === id);
@@ -234,9 +270,104 @@ export default function Escrow() {
         </a>
       </div>
 
+      {/* Tab Navigation */}
+      <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', borderBottom: '1px solid var(--glass-border)' }}>
+        {[['escrows','Escrow Contracts'],['arbiters','Available Arbiters'],['become-arbiter','Become Arbiter']].map(([id, label]) => (
+          <button key={id} onClick={() => setTab(id)} style={{ padding: '0.75rem 1rem', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, color: tab === id ? 'var(--accent-glow)' : 'var(--text-muted)', borderBottom: tab === id ? '2px solid var(--accent-glow)' : '2px solid transparent' }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── BECOME ARBITER ── */}
+      {tab === 'become-arbiter' && (
+        <div className="grid-2">
+          <div className="card">
+            <h3 className="card-title">Register as Arbiter</h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+              Stake XLM to become a trusted arbiter. Once registered, buyers can select you as an arbitrator when creating escrows. Your stake signals commitment — arbiters with higher stakes are more trusted.
+            </p>
+            <div style={{ padding: '1rem', background: 'rgba(168,85,247,0.05)', borderRadius: '10px', border: '1px solid rgba(168,85,247,0.15)', marginBottom: '1.5rem' }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Minimum Stake</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#a855f7', marginTop: '0.25rem' }}>0.1 XLM</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>1,000,000 stroops</div>
+            </div>
+            <form onSubmit={handleRegisterArbiter} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              <div className="form-group">
+                <label className="form-label">Stake Amount (XLM)</label>
+                <input type="number" step="0.1" min="0.1" value={arbiterStake} onChange={e => setArbiterStake(e.target.value)}
+                  placeholder="0.1" className="form-input" required disabled={isRegisteringArbiter} />
+              </div>
+              <button type="submit" disabled={isRegisteringArbiter || !arbiterStake} className="submit-btn">
+                {isRegisteringArbiter ? 'Registering...' : 'Register as Arbiter'}
+              </button>
+            </form>
+          </div>
+          <div className="card">
+            <h3 className="card-title">How Arbitration Works</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '0.5rem' }}>
+              {[
+                ['01', 'Register', 'Stake XLM to join the arbiter registry. Your address becomes selectable by buyers.'],
+                ['02', 'Get Selected', 'Buyers choose 1, 3, 5, or 7 arbiters when creating an escrow. Odd numbers ensure majority.'],
+                ['03', 'Vote', 'If a dispute is raised, you vote Release (pay seller) or Refund (pay buyer).'],
+                ['04', 'Finalize', 'Once majority is reached, anyone can call finalize to execute the decision.'],
+              ].map(([step, title, desc]) => (
+                <div key={step} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--accent-glow)', fontWeight: 700, minWidth: '2rem', paddingTop: '0.1rem' }}>STEP {step}</div>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.25rem' }}>{title}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>{desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── AVAILABLE ARBITERS ── */}
+      {tab === 'arbiters' && (
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3 className="card-title" style={{ margin: 0 }}>Registered Arbiters</h3>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{availableArbiters.length} registered</div>
+          </div>
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
+            These addresses have staked XLM and are eligible to be selected as arbitrators. Copy an address to use it when creating an escrow.
+          </p>
+          {availableArbiters.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+              No arbiters registered yet. Be the first — go to "Become Arbiter".
+            </div>
+          ) : (
+            <div className="table-container">
+              <table>
+                <thead><tr><th>#</th><th>Address</th><th>Action</th></tr></thead>
+                <tbody>
+                  {availableArbiters.map((arb, i) => (
+                    <tr key={i}>
+                      <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{i + 1}</td>
+                      <td className="mono" style={{ fontSize: '0.78rem' }}>{arb}</td>
+                      <td>
+                        <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.6rem' }}
+                          onClick={() => { navigator.clipboard.writeText(arb); toast.success('Address copied!'); }}>
+                          Copy
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ESCROW CONTRACTS ── */}
+      {tab === 'escrows' && (<>
+
       {/* How it works strip */}
-      <div className="info-strip" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: '2.5rem' }}>
-        <div className="info-strip-item">
+      <div className="info-strip" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: '2.5rem' }}>        <div className="info-strip-item">
           <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '0.5rem' }}>STEP 01</div>
           <div className="info-strip-title">Lock Funds in Contract</div>
           <p className="info-strip-body">You deposit XLM into the Soroban escrow contract. The funds are held on-chain — not in any wallet, not by any person. Only the contract rules can release them.</p>
@@ -283,7 +414,7 @@ export default function Escrow() {
             
             {/* Arbitrator Panel */}
             <div className="form-group">
-              <label className="form-label">Arbitration Panel (3-7 addresses, odd number)</label>
+              <label className="form-label">Arbitration Panel (1, 3, 5, or 7 arbitrators)</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {arbitrators.map((arb, idx) => (
                   <input 
@@ -588,6 +719,7 @@ export default function Escrow() {
           )}
         </div>
       </div>
+      </>)}
     </motion.div>
   );
 }

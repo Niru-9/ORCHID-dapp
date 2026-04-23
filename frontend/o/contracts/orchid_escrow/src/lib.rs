@@ -33,8 +33,10 @@
 
 use soroban_sdk::{
     contract, contractimpl, contracttype,
-    token, Address, Env, Symbol,
+    token, Address, Env, Symbol, Vec,
 };
+
+const MIN_ARBITER_STAKE: i128 = 1_000_000; // Minimum stake to register as arbiter
 
 // ─── Storage Keys ─────────────────────────────────────────────────────────────
 
@@ -47,7 +49,9 @@ pub enum DataKey {
     FeeBps,
     DisputeFee,
     Paused,
-    Vote(u64, Address), // (escrow_id, arbitrator) -> ArbitratorDecision
+    Vote(u64, Address),       // (escrow_id, arbitrator) -> ArbitratorDecision
+    ArbiterStake(Address),    // arbitrator address -> stake amount
+    ArbiterList,              // Vec<Address> of all registered arbiters
 }
 
 // ─── State Machine ────────────────────────────────────────────────────────────
@@ -142,6 +146,36 @@ impl OrchidEscrow {
         env.storage().instance().set(&DataKey::Paused, &false);
     }
 
+    // ── Register Arbiter ──────────────────────────────────────────────────────
+    /// Anyone can register as an arbiter by declaring a stake amount.
+    /// For demo: stake is recorded on-chain. Full token transfer in production.
+    pub fn register_arbiter(env: Env, arbiter: Address, amount: i128) {
+        arbiter.require_auth();
+        Self::assert_not_paused(&env);
+        assert!(amount >= MIN_ARBITER_STAKE, "insufficient stake — minimum 1_000_000 stroops");
+
+        let existing_stake: i128 = env.storage().persistent()
+            .get(&DataKey::ArbiterStake(arbiter.clone()))
+            .unwrap_or(0);
+
+        env.storage().persistent()
+            .set(&DataKey::ArbiterStake(arbiter.clone()), &(existing_stake + amount));
+
+        // Add to list only if new registrant
+        if existing_stake == 0 {
+            let mut list: Vec<Address> = env.storage().instance()
+                .get(&DataKey::ArbiterList)
+                .unwrap_or(Vec::new(&env));
+            list.push_back(arbiter.clone());
+            env.storage().instance().set(&DataKey::ArbiterList, &list);
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "arbiter_registered"), arbiter),
+            amount,
+        );
+    }
+
     // ── Create + Fund (atomic) ────────────────────────────────────────────────
     /// Buyer creates AND funds the escrow in one signed transaction.
     /// deadline: absolute timestamp — if seller never delivers, buyer refunds after this
@@ -163,15 +197,19 @@ impl OrchidEscrow {
         assert!(buyer != seller,                     "buyer and seller must differ");
         assert!(deadline > env.ledger().timestamp(), "deadline must be in the future");
         assert!(delivery_window_secs > 0,            "delivery window must be positive");
-        assert!(arbitrators.len() >= 3,              "minimum 3 arbitrators required");
+        assert!(arbitrators.len() >= 1,              "at least one arbitrator required");
         assert!(arbitrators.len() <= 7,              "too many arbitrators");
         assert!(arbitrators.len() % 2 == 1,          "arbitrator count must be odd for majority");
 
-        // Verify all arbitrators are third parties and no duplicates
+        // Verify all arbitrators are registered, third parties, and no duplicates
         for i in 0..arbitrators.len() {
             let arb_i = arbitrators.get(i).unwrap();
             assert!(arb_i != buyer && arb_i != seller, "arbitrator must be a third party");
-            
+
+            let stake: Option<i128> = env.storage().persistent()
+                .get(&DataKey::ArbiterStake(arb_i.clone()));
+            assert!(stake.is_some(), "arbitrator is not registered");
+
             // Check for duplicates
             for j in (i + 1)..arbitrators.len() {
                 let arb_j = arbitrators.get(j).unwrap();
@@ -513,6 +551,20 @@ impl OrchidEscrow {
     pub fn get_votes(env: Env, escrow_id: u64) -> (u32, u32) {
         let r = Self::load(&env, escrow_id);
         (r.votes_release, r.votes_refund)
+    }
+
+    /// Get all registered arbiters
+    pub fn get_arbiters(env: Env) -> Vec<Address> {
+        env.storage().instance()
+            .get(&DataKey::ArbiterList)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Get stake amount for a specific arbiter
+    pub fn get_arbiter_stake(env: Env, arbiter: Address) -> i128 {
+        env.storage().persistent()
+            .get(&DataKey::ArbiterStake(arbiter))
+            .unwrap_or(0)
     }
 
     /// Get user's role in an escrow: "buyer", "seller", "arbitrator", or "none"

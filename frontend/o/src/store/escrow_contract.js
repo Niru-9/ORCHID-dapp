@@ -314,6 +314,23 @@ export async function contractGetActiveEscrows() {
   return readOnly('get_active_escrows', []);
 }
 
+// ── Arbiter Registry ──────────────────────────────────────────────────────────
+
+export async function contractRegisterArbiter(arbiterAddress, stakeAmount) {
+  return invokeContract(arbiterAddress, 'register_arbiter', [
+    addressVal(arbiterAddress),
+    i128Val(stakeAmount),
+  ]);
+}
+
+export async function contractGetArbiters() {
+  return readOnly('get_arbiters', []);
+}
+
+export async function contractGetArbiterStake(arbiterAddress) {
+  return readOnly('get_arbiter_stake', [addressVal(arbiterAddress)]);
+}
+
 /**
  * getEscrowsForUser — fetches all escrows where address is buyer OR seller.
  * Scans the last N escrows from the contract and filters by address.

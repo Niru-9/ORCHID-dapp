@@ -74,6 +74,7 @@ coverage/
 Thumbs.db
 .vscode
 
+.vercel
 
 node_modules/
 target/
