@@ -6,7 +6,7 @@
 
 ## Live Demo
 
-**🔗 [https://orchid-dapp.vercel.app](https://orchid-dapp.vercel.app)**
+**🔗 [https://orchiddapp.vercel.app](https://orchiddapp.vercel.app)**
 
 ---
 
