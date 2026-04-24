@@ -321,11 +321,28 @@ On-chain reputation scoring
 | 2026/04/02 7:16:39 am GMT+5:30 | Salampuria simran | salampuriasimran@gmail.com | GD6VT6577O2AXCKQQNKRLNTTDTVXTLQ7WNXYO2BT7TQUNVQUIHQ6FJVY | Excellent | Easy |  | Interface | Everything is perfect | 5 | Very Dissatisfied | Very Dissatisfied | Very Dissatisfied | Neutral |
 | 2026/04/02 7:23:17 am GMT+5:30 | Diablo | diablo8879@gmail.com | GDW5SG6LHVKQOM5RGMCFG3PYWDWE3TYCPRZHKMER3LJL55JJIR2XDJ2M | Excellent | Very Easy | Idk | Idk | Idk | 5 | Neutral | Neutral | Neutral | Neutral |
 | 2026/04/02 8:13:36 am GMT+5:30 | Lalit Kailas Hire | lalithire110@gmail.com | GBKHL6WU5W2PYBJZW6ILPTBAHPSZPMQWHVJOAK2G2GNMLS2RPX3MLBZX | Excellent | Neutral | Hard to understand at first glance for the new user | UI & Feasible Integration | Some features does not work properly on some mobile devices | 2 | Very Satisfied | Very Satisfied | Very Satisfied | Satisfied |
-### this is the form's response excel sheet 
+### This is the form's response excel sheet 
 https://docs.google.com/spreadsheets/d/e/2PACX-1vRi-2CtTCfkYe-xxU8pETjIAWSuqqxK3gIbvzNIMTv9ZGvX6wS25-MOGM-bmU7haUxX00DM6XciKlPr/pubhtml
 
 ---
+## User Feedback Implementation
 
+| User Name | User Email | User Wallet Address | User Feedback | Commit ID |
+|----------|------------|--------------------|--------------|----------|
+| Monika Tayade |  | GAK3MUQZTU6KB3LFHPPK3YDSM5TRSGRAHL75QI7QIJ5JT6YHD6AYYRHG | Detailed description of features | 1b5502f |
+| Aryan rahaman |  | GAPCPZRIRWSDR52DSYSSMITE4V4UL5SC222A6BP4RYFKNI2XN5WAOH2J | Refining the design and clear congestion | 1b19e7d |
+| Tauqeer Hahsmi |  | GB3K635LFVASBK2GTTNAVL63NIZ3LRSEUX227SF7UZKCTBRYWZU55TYM | Credit score UI issue + font improvement | 6232d3c |
+| Kamal Tayade |  | GASM7HCZMM6K7QSRJVC6WG4KNQK5D4TGTFHLVCP2A24IQ7O5K4VIOD2N | Not supported for iOS | 079ee82 |
+| Rashmi Dharmraj Karankale |  | GCGPGU3NMOYGHQC263YE7XQ2KFG7IH6UBCVTQGCLKYLKURJGCD4BHBKT | Dark & light themes | fde8af9 |
+| Dharmraj Karankale |  | GCGPGU3NMOYGHQC263YE7XQ2KFG7IH6UBCVTQGCLKYLKURJGCD4BHBKT | Dark & light themes | fde8af9 |
+| Nikita Biradar |  | GDSDCTRF7LK4DDGYWFWKFNXC7C4E5R2QRBXO6F2YOLPNOPSDUOVUDMJK | Improve mobile UI | 1b19e7d |
+| Vikas Padvi |  | GCGPGU3NMOYGHQC263YE7XQ2KFG7IH6UBCVTQGCLKYLKURJGCD4BHBKT | Dark & light themes | fde8af9 |
+| Manvesh shah |  | GAYXDNEGIPHFLR2ZJE2LLUV3ZB6OKIRQ5X5HRJ647TOI6RSTQMB7VRF3 | Minor UI/UX improvements | 5745376 |
+| Prem Bharne |  | GAU6W7VF7LRDQFJI7X4TBX3GBLBU6ELUIDG5UUQJ3JZVX2W4DUYPGK6B | UI issues + transaction failures | 92bff71 |
+| Tanishka Bharadwaj |  | GAB4AROKJZXWYHAVYYFRVFONMHIZQAN55GGZRQE6T2PDTJHYOWKDNJQY | Mobile lag issues | 76842c9 |
+| Aryan |  | GAPCPZRIRWSDR52DSYSSMITE4V4UL5SC222A6BP4RYFKNI2XN5WAOH2J | Change font | 6232d3c |
+| Lalit Kailas Hire |  | GCZE4T2RAQDP5Y7Z4LMKN5QKQ66CP5BOR752OM2XBQ4G3LLFXQO532QY | Features not working on some mobile devices | 92bff71 |
+| Ved Kishor Malkunaik |  | GACUAJJ5XYAOHFRNASQU472IEZHMU5G37CLNPGKA7HK55MEFZV6ZJQ45 | Confusing Freighter wallet connection flow | 4a7f70c |
 ---
 
 ## Architecture
