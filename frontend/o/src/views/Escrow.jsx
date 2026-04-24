@@ -429,6 +429,7 @@ export default function Escrow() {
                     placeholder={`Arbitrator ${idx + 1} address (G...)`}
                     className="form-input mono" 
                     style={{ fontSize: '0.8rem' }}
+                    autoComplete="off"
                     disabled={isCreating} 
                   />
                 ))}
