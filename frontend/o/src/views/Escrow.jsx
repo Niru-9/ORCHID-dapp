@@ -80,9 +80,9 @@ export default function Escrow() {
     // Filter out empty arbitrator addresses
     const validArbitrators = arbitrators.filter(a => a.trim().length > 0);
     
-    // Validate arbitrator count (must be 3-7 and odd)
-    if (validArbitrators.length < 3) {
-      toast.error('Minimum 3 arbitrators required');
+    // Validate arbitrator count (must be 1-7 and odd)
+    if (validArbitrators.length < 1) {
+      toast.error('At least 1 arbitrator required');
       return;
     }
     if (validArbitrators.length > 7) {
@@ -445,7 +445,7 @@ export default function Escrow() {
                 )}
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
-                Panel votes by majority. Minimum 3, maximum 7 arbitrators.
+                1 arbiter for demo. Use 3, 5, or 7 for majority voting.
               </div>
             </div>
             

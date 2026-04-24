@@ -373,7 +373,7 @@ export const useWalletStore = create(
       // ── Escrow — Soroban Contract ──────────────────────────────────────────
       // Funds go directly into the deployed Soroban escrow contract.
       // No custody wallet — the contract enforces all rules trustlessly.
-      createEscrow: async (seller, amount, asset, description, expiryDays) => {
+      createEscrow: async (seller, amount, asset, description, expiryDays, arbitrators = []) => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
         if (!import.meta.env.VITE_ESCROW_CONTRACT_ID)
@@ -381,7 +381,7 @@ export const useWalletStore = create(
 
         const { contractCreateEscrow } = await import('./escrow_contract.js');
         const { escrow_id, hash } = await contractCreateEscrow(
-          address, seller, parseFloat(amount), parseInt(expiryDays)
+          address, seller, parseFloat(amount), parseInt(expiryDays), arbitrators
         );
 
         const expiresAt = new Date(Date.now() + parseInt(expiryDays) * 86400000).toISOString();
