@@ -10,7 +10,10 @@ const app = express();
 
 // ── CORS — restrict to known origins ─────────────────────────────────────────
 const ALLOWED_ORIGINS = [
+  'https://orchiddapp.vercel.app',
+  'https://orchid-dapp-topaz.vercel.app',
   'https://orchid-dapp.vercel.app',
+  'https://orchid-sepia.vercel.app',
   'http://localhost:3000',
   'http://localhost:5173',
   process.env.FRONTEND_URL,
@@ -18,8 +21,8 @@ const ALLOWED_ORIGINS = [
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (curl, Postman, server-to-server)
     if (!origin) return cb(null, true);
+    if (origin.endsWith('.vercel.app')) return cb(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
     cb(new Error(`CORS: origin ${origin} not allowed`));
   },

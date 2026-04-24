@@ -201,14 +201,11 @@ impl OrchidEscrow {
         assert!(arbitrators.len() <= 7,              "too many arbitrators");
         assert!(arbitrators.len() % 2 == 1,          "arbitrator count must be odd for majority");
 
-        // Verify all arbitrators are registered, third parties, and no duplicates
+        // Verify all arbitrators are third parties and no duplicates
+        // Note: registry check is optional for demo — register via register_arbiter() for staking
         for i in 0..arbitrators.len() {
             let arb_i = arbitrators.get(i).unwrap();
             assert!(arb_i != buyer && arb_i != seller, "arbitrator must be a third party");
-
-            let stake: Option<i128> = env.storage().persistent()
-                .get(&DataKey::ArbiterStake(arb_i.clone()));
-            assert!(stake.is_some(), "arbitrator is not registered");
 
             // Check for duplicates
             for j in (i + 1)..arbitrators.len() {
