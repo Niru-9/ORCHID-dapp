@@ -241,7 +241,7 @@ impl OrchidPool {
             if change > MAX_PRICE_CHANGE_BPS {
                 // Increment strike counter — auto-pause at ORACLE_STRIKE_LIMIT
                 let strikes: u32 = env.storage().instance()
-                    .get(&DataKey::OracleStrikeCount).unwrap_or(0)
+                    .get(&DataKey::OracleStrikeCount).unwrap_or(0u32)
                     .saturating_add(1);
                 env.storage().instance().set(&DataKey::OracleStrikeCount, &strikes);
                 env.events().publish(("oracle_strike", token.clone()), (change, strikes));
@@ -379,7 +379,7 @@ impl OrchidPool {
         // If borrower has debt, ensure health factor stays above minimum after withdrawal
         if debt_usd > 0 {
             let token = Self::tok(&env);
-            let price = Self::get_price(&env, &token);
+            let price = Self::price_of(&env, &token);
             let new_col_usd = new_col
                 .checked_mul(price).expect("overflow")
                 .checked_div(PRICE_SCALE).expect("div zero");
@@ -411,7 +411,7 @@ impl OrchidPool {
 
         let pool = Self::accrue(&env);
         let token = Self::tok(&env);
-        let price = Self::get_price(&env, &token);
+        let price = Self::price_of(&env, &token);
 
         let collateral = Self::col(&env, &borrower);
         assert!(collateral > 0, "no collateral deposited");
@@ -449,7 +449,7 @@ impl OrchidPool {
         );
 
         let loan_id: u64 = env.storage().persistent()
-            .get(&DataKey::LoanCounter(borrower.clone())).unwrap_or(0)
+            .get(&DataKey::LoanCounter(borrower.clone())).unwrap_or(0u64)
             .checked_add(1).expect("overflow");
         env.storage().persistent().set(&DataKey::LoanCounter(borrower.clone()), &loan_id);
 
@@ -623,7 +623,7 @@ impl OrchidPool {
             let pool_snap: PoolState = env.storage().instance().get(&DataKey::PoolState).unwrap();
             if pool_snap.total_supplied > 0 {
                 let total_bad: i128 = env.storage().instance()
-                    .get(&DataKey::BadDebt).unwrap_or(0)
+                    .get(&DataKey::BadDebt).unwrap_or(0i128)
                     .checked_add(bad).unwrap_or(i128::MAX);
                 let bad_bps = total_bad.checked_mul(BPS).expect("overflow")
                                        .checked_div(pool_snap.total_supplied).expect("div");
@@ -640,8 +640,8 @@ impl OrchidPool {
                     env.storage().instance().set(&DataKey::InsuranceFund,
                         &ins_fund.checked_sub(cover).expect("underflow"));
                     // Insurance covers the liquidator's shortfall
-                    let token = Self::tok(env);
-                    token::Client::new(env, &token)
+                    let token = Self::tok(&env);
+                    token::Client::new(&env, &token)
                         .transfer(&env.current_contract_address(), &liquidator, &cover);
                     env.events().publish(("insurance_auto_deployed",), (cover, bad));
                 }
@@ -986,7 +986,7 @@ impl OrchidPool {
 
     /// Get price with staleness check. Panics if price unset or stale.
     /// Stale = updated more than MAX_PRICE_AGE_SECS ago.
-    fn get_price(env: &Env, token: &Address) -> i128 {
+    fn price_of(env: &Env, token: &Address) -> i128 {
         let price: i128 = env.storage().instance()
             .get(&DataKey::Price(token.clone()))
             .unwrap_or_else(|| panic!("price not set for token"));
@@ -1012,81 +1012,84 @@ impl OrchidPool {
         token::Client::new(env, &token)
             .transfer(&env.current_contract_address(), to, &amount);
     }
-}
-    }
 
-    pub fn get_protocol_fees(env: Env) -> i128 {
-        env.storage().instance().get(&DataKey::ProtocolFees).unwrap_or(0)
-    }
-
-    // ── UI Helpers (Demo-Ready) ───────────────────────────────────────────────
+    // ── UI Helpers ────────────────────────────────────────────────────────────
 
     /// Get all loans for a user (for dashboard)
     pub fn get_user_loans(env: Env, user: Address) -> soroban_sdk::Vec<Loan> {
+        let pool = Self::accrue(&env);
         let mut loans = soroban_sdk::Vec::new(&env);
-        let counter: u64 = env.storage().instance().get(&DataKey::LoanCounter).unwrap_or(0);
-        
+        let counter: u64 = env.storage().persistent()
+            .get(&DataKey::LoanCounter(user.clone())).unwrap_or(0);
         for i in 1..=counter {
-            if let Some(loan) = env.storage().persistent().get::<DataKey, Loan>(&DataKey::Loan(user.clone(), i)) {
+            if let Some(loan) = env.storage().persistent()
+                .get::<DataKey, Loan>(&DataKey::Loan(user.clone(), i)) {
                 loans.push_back(loan);
             }
         }
         loans
     }
 
-    /// Dashboard aggregation (total supplied, borrowed, utilization)
+    /// Dashboard aggregation: (total_supplied, total_borrowed, utilization_bps, insurance_fund)
     pub fn get_dashboard_data(env: Env) -> (i128, i128, i128, i128) {
         let pool = Self::accrue(&env);
         let utilization = if pool.total_supplied > 0 {
             pool.total_borrowed.checked_mul(BPS).unwrap_or(0)
                 .checked_div(pool.total_supplied).unwrap_or(0)
         } else { 0 };
-        
-        (pool.total_supplied, pool.total_borrowed, utilization, pool.total_reserves)
+        let insurance: i128 = env.storage().instance()
+            .get(&DataKey::InsuranceFund).unwrap_or(0);
+        (pool.total_supplied, pool.total_borrowed, utilization, insurance)
     }
 
-    /// Insurance fund status
+    /// Insurance fund balance
     pub fn get_insurance_status(env: Env) -> i128 {
-        let pool: PoolState = env.storage().instance().get(&DataKey::PoolState).unwrap();
-        pool.total_reserves
+        env.storage().instance().get(&DataKey::InsuranceFund).unwrap_or(0)
     }
 
-    /// Max borrowable amount for user (UI preview)
+    /// Max additional borrow for a user in token units
     pub fn max_borrowable(env: Env, user: Address) -> i128 {
         let pool = Self::accrue(&env);
-        let collateral = Self::get_collateral_amount(&env, &user);
-        let price: i128 = env.storage().instance().get(&DataKey::Price).unwrap_or(PRICE_SCALE);
-        
+        let token = Self::tok(&env);
+        let price: i128 = env.storage().instance()
+            .get(&DataKey::Price(token)).unwrap_or(PRICE_SCALE);
+        let collateral = Self::col(&env, &user);
         let col_usd = collateral.checked_mul(price).unwrap_or(0)
             .checked_div(PRICE_SCALE).unwrap_or(0);
-        let debt_usd = Self::total_debt(&env, &user, &pool);
-        
+        let debt_usd = Self::debt_usd(&env, &user, &pool);
         let max_borrow_usd = col_usd
             .checked_mul(LTV_RATIO).unwrap_or(0)
             .checked_div(BPS).unwrap_or(0)
             .saturating_sub(debt_usd);
-            
         if price > 0 {
             max_borrow_usd.checked_mul(PRICE_SCALE).unwrap_or(0)
                 .checked_div(price).unwrap_or(0)
         } else { 0 }
     }
 
-    /// Expected interest for a loan (UI preview)
+    /// Expected accrued interest for a loan (UI preview)
     pub fn expected_interest(env: Env, loan_id: u64, borrower: Address) -> i128 {
         let pool = Self::accrue(&env);
-        if let Some(loan) = env.storage().persistent().get::<DataKey, Loan>(&DataKey::Loan(borrower, loan_id)) {
-            if loan.status != LoanStatus::Active {
-                return 0;
-            }
-            
-            let elapsed = env.ledger().timestamp().saturating_sub(loan.last_accrual);
-            let rate_per_sec = loan.interest_rate_bps
-                .checked_mul(loan.principal).unwrap_or(0)
-                .checked_div(BPS).unwrap_or(0)
-                .checked_div(SECONDS_PER_YEAR).unwrap_or(0);
-            
-            rate_per_sec.checked_mul(elapsed as i128).unwrap_or(0)
+        if let Some(loan) = env.storage().persistent()
+            .get::<DataKey, Loan>(&DataKey::Loan(borrower, loan_id)) {
+            if loan.status != LoanStatus::Active { return 0; }
+            Self::accrued_interest(&loan, &pool)
         } else { 0 }
+    }
+
+    /// Credit score proxy: repaid loans / total loans * 850
+    pub fn get_credit_score(env: Env, user: Address) -> u32 {
+        let counter: u64 = env.storage().persistent()
+            .get(&DataKey::LoanCounter(user.clone())).unwrap_or(0);
+        if counter == 0 { return 650; } // default score
+        let mut repaid = 0u64;
+        for i in 1..=counter {
+            if let Some(loan) = env.storage().persistent()
+                .get::<DataKey, Loan>(&DataKey::Loan(user.clone(), i)) {
+                if loan.status == LoanStatus::Repaid { repaid += 1; }
+            }
+        }
+        let score = 400u64 + (repaid * 450 / counter);
+        score.min(850) as u32
     }
 }
