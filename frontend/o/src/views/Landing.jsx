@@ -159,6 +159,11 @@ export default function Landing() {
             {error} — <button onClick={resetConnection} style={{ background: 'none', border: 'none', color: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}>Reset</button>
           </div>
         )}
+
+        {/* Browser compatibility notice */}
+        <div style={{ marginTop: '1rem', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+          If wallet connection fails, disable Brave Shields or use Chrome / Firefox.
+        </div>
       </section>
 
       {/* ── Live Stats Bar ── */}

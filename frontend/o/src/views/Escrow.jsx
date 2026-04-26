@@ -90,7 +90,20 @@ export default function Escrow() {
       return;
     }
     if (validArbitrators.length % 2 === 0) {
-      toast.error('Arbitrator count must be odd (3, 5, or 7)');
+      toast.error('Arbitrator count must be odd (1, 3, 5, or 7)');
+      return;
+    }
+
+    // Check for duplicates
+    const uniqueArbitrators = new Set(validArbitrators.map(a => a.trim()));
+    if (uniqueArbitrators.size !== validArbitrators.length) {
+      toast.error('Duplicate arbitrator addresses — each arbitrator must be unique');
+      return;
+    }
+
+    // Check none are buyer or seller
+    if (validArbitrators.includes(address) || validArbitrators.includes(seller.trim())) {
+      toast.error('Arbitrator cannot be the buyer or seller');
       return;
     }
     
