@@ -20,13 +20,18 @@ import {
 import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit/sdk';
 
 const RPC_URL     = import.meta.env.VITE_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
-const CONTRACT_ID = import.meta.env.VITE_POOL_CONTRACT_ID;
+const CONTRACT_ID = import.meta.env.VITE_POOL_CONTRACT_ID || null;
 const NET_PASS    = Networks.TESTNET;
 const BASE_FEE    = '300000';
-// Dummy funded account for read-only simulations
 const DUMMY = import.meta.env.VITE_ADMIN_ADDRESS || 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN';
 
-const rpc = new SorobanRpc.Server(RPC_URL);
+// Safe RPC init — won't crash if env vars missing
+let rpc;
+try {
+  rpc = new SorobanRpc.Server(RPC_URL);
+} catch (e) {
+  rpc = null;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -38,7 +43,8 @@ function i128Val(xlm)   {
 }
 
 async function invoke(caller, method, args) {
-  if (!CONTRACT_ID) throw new Error('VITE_POOL_CONTRACT_ID not set');
+  if (!CONTRACT_ID) throw new Error('Pool contract not configured — set VITE_POOL_CONTRACT_ID in Vercel env vars');
+  if (!rpc) throw new Error('RPC not initialized');
 
   const account  = await rpc.getAccount(caller);
   const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NET_PASS })
@@ -82,7 +88,7 @@ async function invoke(caller, method, args) {
 }
 
 async function readOnly(method, args) {
-  if (!CONTRACT_ID) return null;
+  if (!CONTRACT_ID || !rpc) return null;
   try {
     const account = await rpc.getAccount(DUMMY);
     const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NET_PASS })
@@ -192,8 +198,8 @@ export async function poolEarlyWithdrawFD(ownerAddress, fdId) {
 
 // ── Read-only Views ───────────────────────────────────────────────────────────
 
-export async function getPoolStats()              { return readOnly('get_pool_state', []); }
-export async function getPoolState()              { return readOnly('get_pool_state', []); }
+export async function getPoolStats()              { return readOnly('get_pool_stats', []); }
+export async function getPoolState()              { return readOnly('get_pool_stats', []); }
 export async function getBorrowRate()             { return readOnly('get_borrow_rate', []); }
 export async function getSupplyApy()              { return readOnly('get_supply_apy', []); }
 export async function getHealthFactor(addr)       { return readOnly('get_health_factor', [addrVal(addr)]); }
@@ -201,17 +207,19 @@ export async function getCreditScore(addr)        { return readOnly('get_credit_
 export async function getMaxBorrow(addr)          { return readOnly('get_max_borrow', [addrVal(addr)]); }
 export async function getCollateral(addr)         { return readOnly('get_collateral', [addrVal(addr)]); }
 export async function getLoan(addr, loanId)       { return readOnly('get_loan', [addrVal(addr), u64Val(loanId)]); }
-export async function getFD(addr, fdId)           { return readOnly('get_fd', [addrVal(addr), u64Val(fdId)]); }
 export async function getSupplyPosition(addr)     { return readOnly('get_supply_position', [addrVal(addr)]); }
-export async function getHealthInfo(addr)         { return readOnly('get_health_info', [addrVal(addr)]); }
 export async function getProtocolFees()           { return readOnly('get_protocol_fees', []); }
 
-// ── New UI Helpers (Demo-Ready) ───────────────────────────────────────────────
+// ── UI Helpers ────────────────────────────────────────────────────────────────
 
 export async function getUserLoans(addr)          { return readOnly('get_user_loans', [addrVal(addr)]); }
 export async function getDashboardData()          { return readOnly('get_dashboard_data', []); }
 export async function getInsuranceStatus()        { return readOnly('get_insurance_status', []); }
 export async function maxBorrowable(addr)         { return readOnly('max_borrowable', [addrVal(addr)]); }
-export async function expectedInterest(loanId, addr) { 
-  return readOnly('expected_interest', [u64Val(loanId), addrVal(addr)]); 
+export async function expectedInterest(loanId, addr) {
+  return readOnly('expected_interest', [u64Val(loanId), addrVal(addr)]);
 }
+
+// Aliases for compatibility
+export async function getHealthInfo(addr)         { return readOnly('get_health_factor', [addrVal(addr)]); }
+export async function getFD(addr, fdId)           { return readOnly('get_fd', [addrVal(addr), u64Val(fdId)]); }

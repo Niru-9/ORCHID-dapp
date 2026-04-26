@@ -37,7 +37,12 @@ const NATIVE_TOKEN  = import.meta.env.VITE_NATIVE_TOKEN  || 'CDLZFC3SYJYDZT7K67V
 // Dummy funded account for read-only simulations
 const DUMMY_ACCOUNT = import.meta.env.VITE_ADMIN_ADDRESS  || 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN';
 
-const rpcServer = new SorobanRpc.Server(RPC_URL);
+let rpcServer;
+try {
+  rpcServer = new SorobanRpc.Server(RPC_URL);
+} catch (e) {
+  rpcServer = null;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
