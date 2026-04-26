@@ -717,6 +717,33 @@ export default function Escrow() {
                                   {processingId === e.escrow_id ? '...' : 'Mark Delivered'}
                                 </button>
                               )}
+                              {/* Buyer: cancel while Funded */}
+                              {isBuyer && e.status === 'Funded' && (
+                                <button
+                                  className="action-btn"
+                                  style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }}
+                                  disabled={processingId === e.escrow_id}
+                                  onClick={() => setConfirmModal({
+                                    title: 'Cancel Escrow',
+                                    message: 'Cancel this escrow and refund your wallet. Only possible before seller marks delivered.',
+                                    confirmLabel: 'Cancel & Refund',
+                                    danger: true,
+                                    onConfirm: async () => {
+                                      setProcessingId(e.escrow_id);
+                                      try {
+                                        const { contractCancel } = await import('../store/escrow_contract.js');
+                                        await contractCancel(address, e.escrow_id);
+                                        toast.txSuccess('Escrow cancelled. Funds refunded.', '');
+                                        const updated = await getEscrowsForUser(address);
+                                        setOnChainEscrows(updated || []);
+                                      } catch (err) { toast.error(err.message); }
+                                      setProcessingId(null);
+                                    },
+                                  })}
+                                >
+                                  Cancel
+                                </button>
+                              )}
                               {/* Buyer: confirm delivery */}
                               {isBuyer && e.status === 'Delivered' && (
                                 <button
@@ -737,6 +764,41 @@ export default function Escrow() {
                                   {processingId === e.escrow_id ? '...' : 'Confirm & Pay'}
                                 </button>
                               )}
+                              {/* Either party: dispute while Funded or Delivered */}
+                              {(e.status === 'Funded' || e.status === 'Delivered') && (
+                                <button
+                                  className="action-btn"
+                                  style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(239,68,68,0.2)', color: '#f87171' }}
+                                  disabled={processingId === e.escrow_id}
+                                  onClick={() => handleDispute(e.escrow_id)}
+                                >
+                                  Dispute
+                                </button>
+                              )}
+                              {/* Arbitrator: vote on disputed escrow */}
+                              {e.status === 'Disputed' && e.arbitrators?.includes(address) && (
+                                <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                  <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', background: 'rgba(34,197,94,0.1)', borderColor: 'rgba(34,197,94,0.3)', color: '#4ade80' }}
+                                    disabled={processingId === e.escrow_id}
+                                    onClick={() => handleVote(e.escrow_id, 'Release')}>
+                                    Vote Release
+                                  </button>
+                                  <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }}
+                                    disabled={processingId === e.escrow_id}
+                                    onClick={() => handleVote(e.escrow_id, 'Refund')}>
+                                    Vote Refund
+                                  </button>
+                                </div>
+                              )}
+                              {/* Anyone: finalize after majority */}
+                              {e.status === 'Disputed' && (e.votes_release > 0 || e.votes_refund > 0) && (
+                                <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', background: 'rgba(168,85,247,0.1)', borderColor: 'rgba(168,85,247,0.3)', color: '#a855f7' }}
+                                  disabled={processingId === e.escrow_id}
+                                  onClick={() => handleFinalize(e.escrow_id)}>
+                                  Finalize
+                                </button>
+                              )}
+                              {/* Settled states */}
                               {(e.status === 'Released' || e.status === 'AutoReleased' || e.status === 'Refunded' || e.status === 'Cancelled') && (
                                 <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Settled</span>
                               )}
