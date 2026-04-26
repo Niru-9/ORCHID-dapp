@@ -15,6 +15,7 @@ import {
   contractRegisterArbiter,
   contractGetArbiters,
 } from '../store/escrow_contract';
+import ConfirmModal from '../components/ConfirmModal';
 
 export default function Escrow() {
   const { createEscrow, releaseEscrow, refundEscrow, disputeEscrow, autoReleaseEscrow, checkEscrowExpiry, transactions, address } = useWalletStore();
@@ -36,7 +37,8 @@ export default function Escrow() {
   const [arbiterStake, setArbiterStake] = useState('');
   const [isRegisteringArbiter, setIsRegisteringArbiter] = useState(false);
   const [availableArbiters, setAvailableArbiters] = useState([]);
-  const [tab, setTab] = useState('escrows'); // 'escrows' | 'arbiters' | 'become-arbiter'
+  const [tab, setTab] = useState('escrows');
+  const [confirmModal, setConfirmModal] = useState(null);
 
   // Fetch available arbiters on load
   useEffect(() => {
@@ -151,33 +153,47 @@ export default function Escrow() {
   };
 
   const handleForceFinalize = async (escrowId) => {
-    if (!window.confirm('Force finalize? This will refund the buyer after timeout.')) return;
-    setProcessingId(escrowId);
-    try {
-      await contractForceFinalize(address, escrowId);
-      toast.txSuccess('Force finalized - buyer refunded', '');
-      const updated = await getEscrowsForUser(address);
-      setOnChainEscrows(updated || []);
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setProcessingId(null);
-    }
+    setConfirmModal({
+      title: 'Force Finalize',
+      message: 'Arbitration deadline has passed. This will refund the buyer. This action is irreversible.',
+      confirmLabel: 'Force Finalize',
+      danger: true,
+      onConfirm: async () => {
+        setProcessingId(escrowId);
+        try {
+          await contractForceFinalize(address, escrowId);
+          toast.txSuccess('Force finalized - buyer refunded', '');
+          const updated = await getEscrowsForUser(address);
+          setOnChainEscrows(updated || []);
+        } catch (err) {
+          toast.error(err.message);
+        } finally {
+          setProcessingId(null);
+        }
+      },
+    });
   };
 
   const handleDispute = async (escrowId) => {
-    if (!window.confirm('Raise a dispute? This will require arbitrator panel voting.')) return;
-    setProcessingId(escrowId);
-    try {
-      await contractDispute(address, escrowId);
-      toast.success('Dispute raised! Arbitrators will vote.');
-      const updated = await getEscrowsForUser(address);
-      setOnChainEscrows(updated || []);
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setProcessingId(null);
-    }
+    setConfirmModal({
+      title: 'Raise a Dispute',
+      message: 'This will pause the escrow and require the arbitrator panel to vote.\n\nA dispute fee will be charged. Only raise a dispute if there is a genuine issue.',
+      confirmLabel: 'Raise Dispute',
+      danger: true,
+      onConfirm: async () => {
+        setProcessingId(escrowId);
+        try {
+          await contractDispute(address, escrowId);
+          toast.success('Dispute raised! Arbitrators will vote.');
+          const updated = await getEscrowsForUser(address);
+          setOnChainEscrows(updated || []);
+        } catch (err) {
+          toast.error(err.message);
+        } finally {
+          setProcessingId(null);
+        }
+      },
+    });
   };
 
   const handleRegisterArbiter = async (e) => {
@@ -197,53 +213,48 @@ export default function Escrow() {
     }
   };
 
-  // Mark Delivered = confirm delivery AND release funds to seller immediately
   const handleMarkDelivered = async (id) => {
     const tx = transactions.find(t => t.id === id);
     if (!tx) return;
-
-    const confirmed = window.confirm(
-      `✅ CONFIRM DELIVERY & RELEASE PAYMENT\n\n` +
-      `Marking as delivered will immediately release:\n\n` +
-      `  Amount : ${tx.amount}\n` +
-      `  To     : ${tx.merchant}\n\n` +
-      `This is IRREVERSIBLE. Funds will be sent to the seller now.\n\nConfirm?`
-    );
-    if (!confirmed) return;
-
-    setProcessingId(id);
-    try {
-      const hash = await releaseEscrow(id);
-      toast.txSuccess('Delivery confirmed! Payment sent to seller.', hash);
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setProcessingId(null);
-    }
+    setConfirmModal({
+      title: 'Confirm Delivery & Release Payment',
+      message: `Marking as delivered will immediately release:\n\nAmount: ${tx.amount}\nTo: ${tx.merchant}\n\nThis is irreversible. Funds will be sent to the seller now.`,
+      confirmLabel: 'Release Payment',
+      danger: false,
+      onConfirm: async () => {
+        setProcessingId(id);
+        try {
+          const hash = await releaseEscrow(id);
+          toast.txSuccess('Delivery confirmed! Payment sent to seller.', hash);
+        } catch (err) {
+          toast.error(err.message);
+        } finally {
+          setProcessingId(null);
+        }
+      },
+    });
   };
 
-  // Force Refund = send funds back to the buyer (current user who created the escrow)
   const handleRefund = async (id) => {
     const tx = transactions.find(t => t.id === id);
     if (!tx) return;
-
-    const confirmed = window.confirm(
-      `⚠️ REFUND AUTHORIZATION\n\n` +
-      `Funds will be returned to your wallet:\n\n` +
-      `  Amount : ${tx.amount}\n\n` +
-      `This action is IRREVERSIBLE.\n\nProceed?`
-    );
-    if (!confirmed) return;
-
-    setProcessingId(id);
-    try {
-      const hash = await refundEscrow(id);
-      toast.txSuccess('Funds refunded to your wallet!', hash);
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setProcessingId(null);
-    }
+    setConfirmModal({
+      title: 'Refund Authorization',
+      message: `Funds will be returned to your wallet:\n\nAmount: ${tx.amount}\n\nThis action is irreversible.`,
+      confirmLabel: 'Refund',
+      danger: true,
+      onConfirm: async () => {
+        setProcessingId(id);
+        try {
+          const hash = await refundEscrow(id);
+          toast.txSuccess('Funds refunded to your wallet!', hash);
+        } catch (err) {
+          toast.error(err.message);
+        } finally {
+          setProcessingId(null);
+        }
+      },
+    });
   };
 
   const getTimeRemaining = (expiresAt) => {
@@ -270,6 +281,7 @@ export default function Escrow() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+      <ConfirmModal modal={confirmModal} onClose={() => setConfirmModal(null)} />
       <div className="view-header">
         <div>
           <div className="section-label">Secure Payments</div>
@@ -561,13 +573,20 @@ export default function Escrow() {
                                   <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', borderColor: 'rgba(239,68,68,0.3)', color: '#ef4444' }}
                                     disabled={processingId === tx.id}
                                     onClick={async () => {
-                                      if (!window.confirm('Request a refund? The buyer will need to approve it.')) return;
-                                      setProcessingId(tx.id);
-                                      try {
-                                        await useWalletStore.getState().requestEscrowRefund(tx.id);
-                                        toast.success('Refund requested. Awaiting buyer approval.');
-                                      } catch (err) { toast.error(err.message); }
-                                      finally { setProcessingId(null); }
+                                      setConfirmModal({
+                                        title: 'Request Refund',
+                                        message: 'Request a refund? The buyer will need to approve it on-chain.',
+                                        confirmLabel: 'Request Refund',
+                                        danger: false,
+                                        onConfirm: async () => {
+                                          setProcessingId(tx.id);
+                                          try {
+                                            await useWalletStore.getState().requestEscrowRefund(tx.id);
+                                            toast.success('Refund requested. Awaiting buyer approval.');
+                                          } catch (err) { toast.error(err.message); }
+                                          finally { setProcessingId(null); }
+                                        },
+                                      });
                                     }}>
                                     Request Refund
                                   </button>
