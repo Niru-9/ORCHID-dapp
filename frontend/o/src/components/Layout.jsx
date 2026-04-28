@@ -20,7 +20,7 @@ export default function Layout() {
     fetchBalance();
     fetchSettlementTime();
     const balanceInterval = setInterval(fetchBalance, 30000);
-    const settlementInterval = setInterval(fetchSettlementTime, 10000);
+    const settlementInterval = setInterval(fetchSettlementTime, 60000); // 60s — was 10s, caused rate limits
     return () => {
       clearInterval(balanceInterval);
       clearInterval(settlementInterval);

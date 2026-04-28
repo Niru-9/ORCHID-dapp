@@ -26,7 +26,10 @@ export default function Escrow() {
   const [asset, setAsset] = useState('XLM');
   const [description, setDescription] = useState('');
   const [expiryDays, setExpiryDays] = useState('7');
-  const [arbitrators, setArbitrators] = useState(['', '', '']); // Min 3 arbitrators
+  const [escrowMode, setEscrowMode] = useState('A'); // 'A' = trust-minimized, 'B' = arbitration
+
+  // 500 XLM threshold — matches contract MODE_B_THRESHOLD
+  const MODE_B_THRESHOLD_XLM = 500;
   const [isCreating, setIsCreating] = useState(false);
   const [processingId, setProcessingId] = useState(null);
   // On-chain escrows visible to this user (as buyer OR seller OR arbitrator)
@@ -39,6 +42,13 @@ export default function Escrow() {
   const [availableArbiters, setAvailableArbiters] = useState([]);
   const [tab, setTab] = useState('escrows');
   const [confirmModal, setConfirmModal] = useState(null);
+
+  // Auto-switch to Mode B when amount exceeds threshold
+  useEffect(() => {
+    if (parseFloat(amount) >= MODE_B_THRESHOLD_XLM && escrowMode === 'A') {
+      setEscrowMode('B');
+    }
+  }, [amount]);
 
   // Fetch available arbiters on load
   useEffect(() => {
@@ -78,43 +88,19 @@ export default function Escrow() {
   const handleCreateEscrow = async (e) => {
     e.preventDefault();
     if (!seller || !amount) return;
-    
-    // Filter out empty arbitrator addresses
-    const validArbitrators = arbitrators.filter(a => a.trim().length > 0);
-    
-    // Validate arbitrator count (must be 1-7 and odd)
-    if (validArbitrators.length < 1) {
-      toast.error('At least 1 arbitrator required');
-      return;
-    }
-    if (validArbitrators.length > 7) {
-      toast.error('Maximum 7 arbitrators allowed');
-      return;
-    }
-    if (validArbitrators.length % 2 === 0) {
-      toast.error('Arbitrator count must be odd (1, 3, 5, or 7)');
+
+    // Hard block: contract will reject Mode A above threshold — catch it early
+    if (escrowMode === 'A' && parseFloat(amount) >= MODE_B_THRESHOLD_XLM) {
+      toast.error(`Amounts ≥ ${MODE_B_THRESHOLD_XLM} XLM require Mode B. Switch mode above.`);
       return;
     }
 
-    // Check for duplicates
-    const uniqueArbitrators = new Set(validArbitrators.map(a => a.trim()));
-    if (uniqueArbitrators.size !== validArbitrators.length) {
-      toast.error('Duplicate arbitrator addresses — each arbitrator must be unique');
-      return;
-    }
-
-    // Check none are buyer or seller
-    if (validArbitrators.includes(address) || validArbitrators.includes(seller.trim())) {
-      toast.error('Arbitrator cannot be the buyer or seller');
-      return;
-    }
-    
     setIsCreating(true);
     try {
-      const hash = await createEscrow(seller, amount, asset, description, expiryDays, validArbitrators);
-      toast.txSuccess('Escrow created with arbitration panel!', hash);
+      const useArbitration = escrowMode === 'B';
+      const hash = await createEscrow(seller, amount, asset, description, expiryDays, useArbitration);
+      toast.txSuccess(useArbitration ? 'Escrow created — arbitrators auto-assigned' : 'Trust-minimized escrow created', hash);
       setSeller(''); setAmount(''); setDescription('');
-      setArbitrators(['', '', '']); // Reset to 3 empty slots
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -287,7 +273,7 @@ export default function Escrow() {
           <div className="section-label">Secure Payments</div>
           <h2 className="view-title">Lock Funds</h2>
           <p className="view-subtitle">
-            Lock money in a smart contract and release it only when you're satisfied. No bank, no arbitrator — just code. Perfect for freelance work, purchases, or any payment where trust matters.
+            Lock funds in a smart contract. A panel of human arbitrators resolves disputes — the contract enforces their decision. No single party controls the outcome.
           </p>
         </div>
         <a href={`https://stellar.expert/explorer/testnet/contract/${import.meta.env.VITE_ESCROW_CONTRACT_ID}`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-glow)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none', border: '1px solid rgba(168,85,247,0.2)', padding: '0.5rem 1rem', borderRadius: '0.5rem', flexShrink: 0 }}>
@@ -314,14 +300,14 @@ export default function Escrow() {
             </p>
             <div style={{ padding: '1rem', background: 'rgba(168,85,247,0.05)', borderRadius: '10px', border: '1px solid rgba(168,85,247,0.15)', marginBottom: '1.5rem' }}>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Minimum Stake</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#a855f7', marginTop: '0.25rem' }}>0.1 XLM</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>1,000,000 stroops</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#a855f7', marginTop: '0.25rem' }}>500 XLM</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>5,000,000,000 stroops — must exceed expected dispute gain</div>
             </div>
             <form onSubmit={handleRegisterArbiter} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               <div className="form-group">
                 <label className="form-label">Stake Amount (XLM)</label>
-                <input type="number" step="0.1" min="0.1" value={arbiterStake} onChange={e => setArbiterStake(e.target.value)}
-                  placeholder="0.1" className="form-input" required disabled={isRegisteringArbiter} />
+                <input type="number" step="1" min="500" value={arbiterStake} onChange={e => setArbiterStake(e.target.value)}
+                  placeholder="500" className="form-input" required disabled={isRegisteringArbiter} />
               </div>
               <button type="submit" disabled={isRegisteringArbiter || !arbiterStake} className="submit-btn">
                 {isRegisteringArbiter ? 'Registering...' : 'Register as Arbiter'}
@@ -332,10 +318,10 @@ export default function Escrow() {
             <h3 className="card-title">How Arbitration Works</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '0.5rem' }}>
               {[
-                ['01', 'Register', 'Stake XLM to join the arbiter registry. Your address becomes selectable by buyers.'],
-                ['02', 'Get Selected', 'Buyers choose 1, 3, 5, or 7 arbiters when creating an escrow. Odd numbers ensure majority.'],
-                ['03', 'Vote', 'If a dispute is raised, you vote Release (pay seller) or Refund (pay buyer).'],
-                ['04', 'Finalize', 'Once majority is reached, anyone can call finalize to execute the decision.'],
+                ['01', 'Register', 'Stake XLM to join the arbiter pool. Your address becomes eligible for auto-assignment.'],
+                ['02', 'Get Assigned', 'When a buyer creates a Mode B escrow, the contract selects arbiters automatically. You cannot be hand-picked — selection is pseudo-random from the staked pool.'],
+                ['03', 'Vote', 'If a dispute is raised, you vote Release (pay seller) or Refund (pay buyer). One vote per escrow.'],
+                ['04', 'Finalize', 'Once majority is reached, anyone calls finalize. The contract executes — no override possible.'],
               ].map(([step, title, desc]) => (
                 <div key={step} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
                   <div style={{ fontSize: '0.65rem', color: 'var(--accent-glow)', fontWeight: 700, minWidth: '2rem', paddingTop: '0.1rem' }}>STEP {step}</div>
@@ -358,7 +344,7 @@ export default function Escrow() {
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{availableArbiters.length} registered</div>
           </div>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
-            These addresses have staked XLM and are eligible to be selected as arbitrators. Copy an address to use it when creating an escrow.
+            These addresses have staked XLM and are eligible for auto-assignment as arbitrators. The contract selects from this pool — users cannot choose specific arbiters.
           </p>
           {availableArbiters.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
@@ -367,17 +353,16 @@ export default function Escrow() {
           ) : (
             <div className="table-container">
               <table>
-                <thead><tr><th>#</th><th>Address</th><th>Action</th></tr></thead>
+                <thead><tr><th>#</th><th>Address</th><th>Status</th></tr></thead>
                 <tbody>
                   {availableArbiters.map((arb, i) => (
                     <tr key={i}>
                       <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{i + 1}</td>
                       <td className="mono" style={{ fontSize: '0.78rem' }}>{arb}</td>
                       <td>
-                        <button className="action-btn" style={{ fontSize: '0.7rem', padding: '0.3rem 0.6rem' }}
-                          onClick={() => { navigator.clipboard.writeText(arb); toast.success('Address copied!'); }}>
-                          Copy
-                        </button>
+                        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#4ade80', background: 'rgba(34,197,94,0.1)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
+                          Eligible
+                        </span>
                       </td>
                     </tr>
                   ))}
@@ -395,17 +380,17 @@ export default function Escrow() {
       <div className="info-strip" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: '2.5rem' }}>        <div className="info-strip-item">
           <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '0.5rem' }}>STEP 01</div>
           <div className="info-strip-title">Lock Funds in Contract</div>
-          <p className="info-strip-body">You deposit XLM into the Soroban escrow contract. The funds are held on-chain — not in any wallet, not by any person. Only the contract rules can release them.</p>
+          <p className="info-strip-body">You deposit XLM into the Soroban escrow contract. Funds are held on-chain — not in any wallet, not by any person. Only the contract rules can release them.</p>
         </div>
         <div className="info-strip-item">
           <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '0.5rem' }}>STEP 02</div>
-          <div className="info-strip-title">Confirm Delivery</div>
-          <p className="info-strip-body">Once the seller delivers what was agreed, you mark it complete. The contract instantly releases the full payment to the seller's wallet — no delays, no disputes.</p>
+          <div className="info-strip-title">Seller Delivers, Buyer Confirms</div>
+          <p className="info-strip-body">Seller marks delivery on-chain. Buyer confirms and funds release. Mode A: timeouts handle inaction deterministically. Mode B: either party can raise a dispute — arbitration panel votes, contract executes.</p>
         </div>
         <div className="info-strip-item">
           <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '0.5rem' }}>STEP 03</div>
-          <div className="info-strip-title">Auto-Expiry Protection</div>
-          <p className="info-strip-body">Set an expiry window of 24 hours to 30 days. If no action is taken before expiry, the contract automatically refunds your wallet — you never lose access to your funds.</p>
+          <div className="info-strip-title">Deadlines Protect Everyone</div>
+          <p className="info-strip-body">If seller never delivers, buyer reclaims funds after the deadline. If buyer disappears after delivery, seller gets paid after the confirmation window. No funds locked forever.</p>
         </div>
       </div>
 
@@ -437,43 +422,63 @@ export default function Escrow() {
               <input type="text" value={seller} onChange={(e) => setSeller(e.target.value)} placeholder="G..." className="form-input mono" required disabled={isCreating} />
             </div>
             
-            {/* Arbitrator Panel */}
+            {/* Mode selector */}
             <div className="form-group">
-              <label className="form-label">Arbitration Panel (1, 3, 5, or 7 arbitrators)</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {arbitrators.map((arb, idx) => (
-                  <input 
-                    key={idx}
-                    type="text" 
-                    value={arb} 
-                    onChange={(e) => {
-                      const newArbs = [...arbitrators];
-                      newArbs[idx] = e.target.value;
-                      setArbitrators(newArbs);
-                    }} 
-                    placeholder={`Arbitrator ${idx + 1} address (G...)`}
-                    className="form-input mono" 
-                    style={{ fontSize: '0.8rem' }}
-                    autoComplete="off"
-                    disabled={isCreating} 
-                  />
-                ))}
-                {arbitrators.length < 7 && (
-                  <button 
-                    type="button"
-                    onClick={() => setArbitrators([...arbitrators, ''])}
-                    className="action-btn"
-                    style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', alignSelf: 'flex-start' }}
-                    disabled={isCreating}
-                  >
-                    + Add Arbitrator
-                  </button>
-                )}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
-                1 arbiter for demo. Use 3, 5, or 7 for majority voting.
+              <label className="form-label">Escrow Mode</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.5rem' }}>
+                <button type="button" onClick={() => setEscrowMode('A')} style={{
+                  padding: '0.875rem', borderRadius: '10px',
+                  border: `1px solid ${escrowMode === 'A' ? 'rgba(201,168,87,0.5)' : '#27272A'}`,
+                  background: escrowMode === 'A' ? 'rgba(201,168,87,0.08)' : 'transparent',
+                  cursor: parseFloat(amount) >= MODE_B_THRESHOLD_XLM ? 'not-allowed' : 'pointer',
+                  textAlign: 'left', opacity: parseFloat(amount) >= MODE_B_THRESHOLD_XLM ? 0.4 : 1,
+                }} disabled={parseFloat(amount) >= MODE_B_THRESHOLD_XLM}>
+                  <div style={{ fontWeight: 700, fontSize: '0.82rem', color: escrowMode === 'A' ? '#C9A857' : '#A1A1AA', marginBottom: '0.25rem' }}>Mode A — Trust-Minimized</div>
+                  <div style={{ fontSize: '0.72rem', color: '#71717a', lineHeight: 1.5 }}>
+                    No arbitrators. Deterministic timeouts only.
+                    {parseFloat(amount) >= MODE_B_THRESHOLD_XLM
+                      ? <span style={{ color: '#ef4444', display: 'block', marginTop: '0.25rem' }}>Disabled above {MODE_B_THRESHOLD_XLM} XLM</span>
+                      : <span style={{ color: '#f59e0b', display: 'block', marginTop: '0.25rem' }}>Risk: wrong outcomes possible if you miss deadlines</span>
+                    }
+                  </div>
+                </button>
+                <button type="button" onClick={() => setEscrowMode('B')} style={{
+                  padding: '0.875rem', borderRadius: '10px',
+                  border: `1px solid ${escrowMode === 'B' ? 'rgba(168,85,247,0.5)' : parseFloat(amount) >= MODE_B_THRESHOLD_XLM ? 'rgba(168,85,247,0.4)' : '#27272A'}`,
+                  background: escrowMode === 'B' ? 'rgba(168,85,247,0.06)' : parseFloat(amount) >= MODE_B_THRESHOLD_XLM ? 'rgba(168,85,247,0.04)' : 'transparent',
+                  cursor: 'pointer', textAlign: 'left',
+                }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.82rem', color: escrowMode === 'B' ? '#a855f7' : '#A1A1AA', marginBottom: '0.25rem' }}>
+                    Mode B — Arbitration
+                    {parseFloat(amount) >= MODE_B_THRESHOLD_XLM && <span style={{ color: '#f59e0b', fontSize: '0.65rem', marginLeft: '0.4rem' }}>REQUIRED</span>}
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#71717a', lineHeight: 1.5 }}>Human panel resolves disputes. All arbitrators must be registered with stake.</div>
+                </button>
               </div>
             </div>
+
+            {/* Arbitrator Panel — Mode B only */}
+            {escrowMode === 'B' && (
+              <div style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.2)', borderRadius: '10px', padding: '1rem' }}>
+                <div style={{ fontSize: '0.72rem', color: '#a855f7', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.5rem' }}>Auto-Assignment</div>
+                <div style={{ fontSize: '0.85rem', color: '#F5F5F5', fontWeight: 600, marginBottom: '0.35rem' }}>
+                  {parseFloat(amount) >= 2000 ? '7 arbitrators' : parseFloat(amount) >= 500 ? '5 arbitrators' : '3 arbitrators'} will be assigned
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#71717a', lineHeight: 1.6 }}>
+                  The contract selects arbitrators automatically from the staked pool. You cannot choose them — this prevents collusion. Panel is locked at creation.
+                </div>
+                {availableArbiters.length > 0 && (
+                  <div style={{ fontSize: '0.72rem', color: '#C9A857', marginTop: '0.5rem' }}>
+                    {availableArbiters.length} registered arbiter{availableArbiters.length !== 1 ? 's' : ''} in pool
+                  </div>
+                )}
+                {availableArbiters.length < (parseFloat(amount) >= 2000 ? 7 : parseFloat(amount) >= 500 ? 5 : 3) && (
+                  <div style={{ fontSize: '0.72rem', color: '#ef4444', marginTop: '0.35rem' }}>
+                    ⚠ Pool may be too small — contract will reject if fewer than {parseFloat(amount) >= 2000 ? 7 : parseFloat(amount) >= 500 ? 5 : 3} eligible arbiters exist
+                  </div>
+                )}
+              </div>
+            )}
             
             <div className="form-group" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <div>
@@ -502,7 +507,7 @@ export default function Escrow() {
               <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g., Logo Design — Milestone 1" className="form-input" disabled={isCreating} />
             </div>
             <button type="submit" disabled={isCreating || !seller || !amount} className="submit-btn" style={{ marginTop: '0.5rem' }}>
-              {isCreating ? 'Creating Escrow...' : 'Lock Funds in Contract'}
+              {isCreating ? 'Creating Escrow...' : escrowMode === 'B' ? 'Lock Funds + Enable Arbitration' : 'Lock Funds (Trust-Minimized)'}
             </button>
           </form>
         </div>
@@ -659,6 +664,7 @@ export default function Escrow() {
                       <th>Amount</th>
                       <th>Counterparty</th>
                       <th>Status</th>
+                      <th>Mode</th>
                       <th>Action</th>
                     </tr>
                   </thead>
@@ -693,6 +699,11 @@ export default function Escrow() {
                           <td>
                             <span style={{ padding: '0.25rem 0.6rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 600, background: `${statusColor}18`, color: statusColor }}>
                               {e.status}
+                            </span>
+                          </td>
+                          <td>
+                            <span style={{ padding: '0.2rem 0.5rem', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 700, background: e.arbitrators?.length > 0 ? 'rgba(168,85,247,0.1)' : 'rgba(201,168,87,0.08)', color: e.arbitrators?.length > 0 ? '#a855f7' : '#C9A857' }}>
+                              {e.arbitrators?.length > 0 ? 'Mode B' : 'Mode A'}
                             </span>
                           </td>
                           <td>
@@ -798,7 +809,7 @@ export default function Escrow() {
                                   Finalize
                                 </button>
                               )}
-                              {/* Settled states */}
+        {/* Settled states */}
                               {(e.status === 'Released' || e.status === 'AutoReleased' || e.status === 'Refunded' || e.status === 'Cancelled') && (
                                 <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Settled</span>
                               )}

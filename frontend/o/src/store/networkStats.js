@@ -7,6 +7,10 @@ const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 const LIQUIDITY_POOL_PUB = import.meta.env.VITE_POOL_ADDRESS;
 const ESCROW_CUSTODY_PUB  = import.meta.env.VITE_ESCROW_ADDRESS;
 
+// Module-level debounce for fetchNodeCount
+let _lastNodeFetch = 0;
+const NODE_FETCH_COOLDOWN_MS = 60_000; // 1 minute
+
 export const useNetworkStats = create(
   persist(
     (set, get) => ({
@@ -54,6 +58,10 @@ export const useNetworkStats = create(
 
       // Fetch unique accounts that have sent to pool or escrow — real cross-user count
       fetchNodeCount: async () => {
+        const now = Date.now();
+        if (now - _lastNodeFetch < NODE_FETCH_COOLDOWN_MS) return;
+        _lastNodeFetch = now;
+
         try {
           const targets = [LIQUIDITY_POOL_PUB, ESCROW_CUSTODY_PUB].filter(Boolean);
           if (targets.length === 0) return;

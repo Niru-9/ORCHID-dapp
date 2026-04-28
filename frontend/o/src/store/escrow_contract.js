@@ -133,7 +133,9 @@ async function readOnly(method, args) {
 
 /**
  * Create escrow + fund in one flow.
- * arbitrators = array of 3-7 arbitrator addresses (must be odd number)
+ * useArbitration = false → Mode A (trust-minimized, no dispute path)
+ * useArbitration = true  → Mode B (contract auto-assigns panel from registered pool)
+ * Users CANNOT specify arbitrators — the contract selects them.
  * Returns { escrow_id, hash }
  */
 export async function contractCreateEscrow(
@@ -141,27 +143,20 @@ export async function contractCreateEscrow(
   sellerAddress,
   amountXlm,
   expiryDays,
-  arbitrators = []
+  useArbitration = false
 ) {
   const now      = Math.floor(Date.now() / 1000);
   const deadline = now + parseInt(expiryDays) * 86400;
-  // Delivery window: buyer has 3 days after seller marks delivered to confirm
   const deliveryWindowSecs = 3 * 86400;
 
-  // Convert arbitrators array to Soroban Vec
-  const arbitratorsVec = xdr.ScVal.scvVec(
-    arbitrators.map(addr => addressVal(addr))
-  );
-
-  // create_escrow now funds atomically — no separate fund() call
   const createResult = await invokeContract(buyerAddress, 'create_escrow', [
     addressVal(buyerAddress),
     addressVal(sellerAddress),
-    arbitratorsVec,
     addressVal(NATIVE_TOKEN),
     i128Val(amountXlm),
     u64Val(deadline),
     u64Val(deliveryWindowSecs),
+    xdr.ScVal.scvBool(useArbitration),
   ]);
 
   const escrowId = scValToNative(createResult.result);
@@ -211,6 +206,7 @@ export async function contractDispute(callerAddress, escrowId) {
  * decision: 'Release' or 'Refund'
  */
 export async function contractVote(arbitratorAddress, escrowId, decision) {
+  // Soroban enum variant = scvEnum with the variant name as a symbol
   const decisionVal = xdr.ScVal.scvVec([
     xdr.ScVal.scvSymbol(decision === 'Release' ? 'Release' : 'Refund'),
   ]);
@@ -219,6 +215,27 @@ export async function contractVote(arbitratorAddress, escrowId, decision) {
     u64Val(escrowId),
     addressVal(arbitratorAddress),
     decisionVal,
+  ]);
+}
+
+/**
+ * refund_after_deadline — buyer reclaims funds if seller never delivered.
+ * Permissionless — anyone can call, funds always go to buyer.
+ */
+export async function contractRefundAfterDeadline(callerAddress, escrowId) {
+  return invokeContract(callerAddress, 'refund_after_deadline', [
+    u64Val(escrowId),
+  ]);
+}
+
+/**
+ * register_arbiter — stake XLM to join the arbiter registry.
+ * stakeXlm: amount in XLM (e.g. "0.1")
+ */
+export async function contractRegisterArbiterWithStake(arbiterAddress, stakeXlm) {
+  return invokeContract(arbiterAddress, 'register_arbiter', [
+    addressVal(arbiterAddress),
+    i128Val(stakeXlm),
   ]);
 }
 
@@ -305,6 +322,66 @@ export async function contractGetFeeBps() {
 
 export async function contractGetVotes(escrowId) {
   return readOnly('get_votes', [u64Val(escrowId)]);
+}
+
+export async function contractIsModeB(escrowId) {
+  return readOnly('is_mode_b', [u64Val(escrowId)]);
+}
+
+/** Returns panel size (3/5/7) for a given XLM amount. */
+export async function contractGetPanelSize(amountXlm) {
+  const stroops = BigInt(Math.round(parseFloat(amountXlm) * 1e7));
+  return readOnly('get_panel_size', [nativeToScVal(stroops, { type: 'i128' })]);
+}
+
+/** Returns count of eligible (staked) arbiters in the pool. */
+export async function contractGetEligibleArbiterCount() {
+  return readOnly('get_eligible_arbiter_count', []);
+}
+
+/** Slash inactive arbiters after dispute_deadline. Permissionless. */
+export async function contractSlashInactive(callerAddress, escrowId) {
+  return invokeContract(callerAddress, 'slash_inactive', [u64Val(escrowId)]);
+}
+
+/** Slash minority voters after finalize. Permissionless. */
+export async function contractSlashMinority(callerAddress, escrowId) {
+  return invokeContract(callerAddress, 'slash_minority', [u64Val(escrowId)]);
+}
+
+/** Distribute dispute fee pool to majority voters. Permissionless. */
+export async function contractDistributeRewards(callerAddress, escrowId) {
+  return invokeContract(callerAddress, 'distribute_rewards', [u64Val(escrowId)]);
+}
+
+/** Request unstake — starts 7-day cooldown. */
+export async function contractRequestUnstake(arbiterAddress) {
+  return invokeContract(arbiterAddress, 'request_unstake', [addressVal(arbiterAddress)]);
+}
+
+/** Claim unstaked tokens after cooldown. */
+export async function contractClaimUnstake(arbiterAddress) {
+  return invokeContract(arbiterAddress, 'claim_unstake', [addressVal(arbiterAddress)]);
+}
+
+/** Get arbiter participation stats: [total_assigned, missed_votes] */
+export async function contractGetArbiterStats(arbiterAddress) {
+  return readOnly('get_arbiter_stats', [addressVal(arbiterAddress)]);
+}
+
+/** Get unstake cooldown end timestamp (0 = no request). */
+export async function contractGetUnstakeAt(arbiterAddress) {
+  return readOnly('get_unstake_at', [addressVal(arbiterAddress)]);
+}
+
+/** Get dispute fee pool for an escrow. */
+export async function contractGetDisputeFeePool(escrowId) {
+  return readOnly('get_dispute_fee_pool', [u64Val(escrowId)]);
+}
+
+/** Get dispute spike status: [count, window_start]. */
+export async function contractGetDisputeSpikeStatus() {
+  return readOnly('get_dispute_spike_status', []);
 }
 
 export async function contractGetRole(userAddress, escrowId) {

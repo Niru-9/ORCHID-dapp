@@ -25,6 +25,11 @@ const LEDGER_SAMPLE = 20;
 // How many txs to fetch per custody account for volume/user indexing
 const TX_PAGE_LIMIT = 200;
 
+// Module-level debounce for fetchBackendMetrics — shared across all store instances
+// Prevents multiple views calling it simultaneously and hitting rate limits
+let _lastBackendFetch = 0;
+const BACKEND_FETCH_COOLDOWN_MS = 30_000; // 30 seconds
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function fetchJson(url) {
@@ -223,10 +228,18 @@ export const useAnalytics = create(
       // INDEX FROM HORIZON
       // Fetches real on-chain txs from ALL known accounts (custody + wallets)
       // and merges into eventLog with real XLM amounts from operations.
+      // Rate-limited: minimum 5 minutes between full index runs.
       // ─────────────────────────────────────────────────────────────────────
       indexFromHorizon: async () => {
-        const { isIndexing, eventLog, walletRegistry } = get();
+        const { isIndexing, eventLog, walletRegistry, lastIndexedAt } = get();
         if (isIndexing) return;
+
+        // 5-minute cooldown — prevents rate limit from multiple views calling simultaneously
+        if (lastIndexedAt) {
+          const msSinceLast = Date.now() - new Date(lastIndexedAt).getTime();
+          if (msSinceLast < 5 * 60 * 1000) return;
+        }
+
         set({ isIndexing: true, indexError: null });
 
         try {
@@ -280,8 +293,13 @@ export const useAnalytics = create(
       // ─────────────────────────────────────────────────────────────────────
       // FETCH BACKEND METRICS
       // Backend is source of truth. Called on mount + after every tx.
+      // Debounced: minimum 30s between calls to prevent rate limits.
       // ─────────────────────────────────────────────────────────────────────
       fetchBackendMetrics: async () => {
+        const now = Date.now();
+        if (now - _lastBackendFetch < BACKEND_FETCH_COOLDOWN_MS) return;
+        _lastBackendFetch = now;
+
         try {
           const { api } = await import('./api.js');
           const m = await api.getMetrics();

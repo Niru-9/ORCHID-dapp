@@ -140,7 +140,7 @@ function NetworkStatsTab() {
 
   useEffect(() => {
     fetchBalances(); fetchSettlementTime(); fetchBackendMetrics();
-    const t1=setInterval(fetchBalances,30_000); const t2=setInterval(fetchBackendMetrics,15_000);
+    const t1=setInterval(fetchBalances,30_000); const t2=setInterval(fetchBackendMetrics,60_000);
     return ()=>{clearInterval(t1);clearInterval(t2);};
   }, [fetchBalances, fetchSettlementTime, fetchBackendMetrics]);
 

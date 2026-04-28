@@ -5,6 +5,7 @@ import Layout from './components/Layout';
 import Landing from './views/Landing';
 import Dashboard from './views/Dashboard';
 import Escrow from './views/Escrow';
+import Arbitration from './views/Arbitration';
 import Lending from './views/Lending';
 import PaymentHub from './views/PaymentHub';
 import CreditScore from './views/CreditScore';
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/overview"    element={<Overview />} />
           <Route path="/payment-hub" element={<PaymentHub />} />
           <Route path="/escrow"      element={<Escrow />} />
+          <Route path="/arbitration" element={<Arbitration />} />
           <Route path="/lending"     element={<Lending />} />
           <Route path="/liquidation" element={<Liquidation />} />
           <Route path="/credit-score" element={<CreditScore />} />

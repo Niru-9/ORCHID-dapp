@@ -4,7 +4,7 @@ import { useWalletStore } from '../store/wallet';
 import {
   Home, Send, Lock, TrendingUp,
   Hexagon, X, LogOut, Copy, Check,
-  BarChart2, MonitorDot, Activity,
+  BarChart2, MonitorDot, Activity, Scale,
 } from 'lucide-react';
 
 export default function Sidebar({ onClose }) {
@@ -13,10 +13,11 @@ export default function Sidebar({ onClose }) {
 
   // Primary — what users actually do
   const primaryNav = [
-    { path: '/dashboard',   label: 'Home',         icon: Home },
-    { path: '/payment-hub', label: 'Send Money',   icon: Send },
-    { path: '/escrow',      label: 'Lock Funds',   icon: Lock },
-    { path: '/lending',     label: 'Earn Yield',   icon: TrendingUp },
+    { path: '/dashboard',    label: 'Home',         icon: Home },
+    { path: '/payment-hub',  label: 'Send Money',   icon: Send },
+    { path: '/escrow',       label: 'Lock Funds',   icon: Lock },
+    { path: '/arbitration',  label: 'Arbitration',  icon: Scale },
+    { path: '/lending',      label: 'Earn Yield',   icon: TrendingUp },
   ];
 
   // Secondary — analytics & tools

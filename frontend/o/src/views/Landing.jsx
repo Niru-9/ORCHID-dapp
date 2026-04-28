@@ -16,8 +16,8 @@ export default function Landing() {
     fetchSettlementTime();
     fetchBalances();
     fetchBackendMetrics();
-    const t1 = setInterval(fetchSettlementTime, 10_000);
-    const t2 = setInterval(fetchBackendMetrics, 15_000);
+    const t1 = setInterval(fetchSettlementTime, 60_000);
+    const t2 = setInterval(fetchBackendMetrics, 60_000);
     return () => { clearInterval(t1); clearInterval(t2); };
   }, [fetchSettlementTime, fetchBalances, fetchBackendMetrics]);
 

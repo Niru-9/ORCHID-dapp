@@ -9,7 +9,7 @@ import { Send, Lock, TrendingUp, CheckCircle2, AlertCircle, Activity, ArrowRight
 export default function Dashboard() {
   const { address, balance, sendTransaction, transactions } = useWalletStore();
   const { creditScore, poolBalance } = useLendingStore();
-  const { fetchBalances, fetchBackendMetrics, indexFromHorizon, isIndexing } = useAnalytics();
+  const { fetchBalances, fetchBackendMetrics } = useAnalytics();
   const navigate = useNavigate();
 
   const [destination, setDestination] = useState('');
@@ -19,11 +19,11 @@ export default function Dashboard() {
   const [txError, setTxError] = useState(null);
 
   useEffect(() => {
-    fetchBalances(); fetchBackendMetrics(); indexFromHorizon();
+    fetchBalances(); fetchBackendMetrics();
     const t1 = setInterval(fetchBalances, 30_000);
-    const t2 = setInterval(fetchBackendMetrics, 15_000);
+    const t2 = setInterval(fetchBackendMetrics, 60_000);
     return () => { clearInterval(t1); clearInterval(t2); };
-  }, [fetchBalances, fetchBackendMetrics, indexFromHorizon]);
+  }, [fetchBalances, fetchBackendMetrics]);
 
   const handleSend = async (e) => {
     e.preventDefault();
