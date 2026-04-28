@@ -421,7 +421,20 @@ export async function contractGetUserEscrows(userAddress) {
 }
 
 export async function contractGetActiveEscrows() {
-  return readOnly('get_active_escrows', []);
+  // Use paginated version — avoids O(n) full scan at high escrow counts.
+  // Fetches last 50 active escrows starting from the most recent.
+  if (!CONTRACT_ID) return [];
+  try {
+    const total = await readOnly('escrow_count', []);
+    if (!total || total === 0) return [];
+    const count = Number(total);
+    const startId = Math.max(1, count - 49);
+    const result = await readOnly('get_active_escrows_paginated', [
+      u64Val(startId),
+      u64Val(50),
+    ]);
+    return result ?? [];
+  } catch { return []; }
 }
 
 // ── Arbiter Registry ──────────────────────────────────────────────────────────

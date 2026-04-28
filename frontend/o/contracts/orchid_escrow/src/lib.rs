@@ -1088,6 +1088,10 @@ impl OrchidEscrow {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &false);
+        // Reset spike counter on unpause so the first legitimate dispute
+        // after recovery doesn't immediately re-trigger the auto-pause.
+        env.storage().instance().set(&DataKey::DisputeCount, &0u32);
+        env.storage().instance().set(&DataKey::DisputeWindowStart, &env.ledger().timestamp());
         env.events().publish((Symbol::new(&env, "unpaused"),), false);
     }
 
