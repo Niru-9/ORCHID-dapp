@@ -174,10 +174,11 @@ export default function Arbitration() {
   const handleSlashAndReward = async (escrow) => {
     setProcessingId(escrow.escrow_id);
     try {
-      // Run slash + reward in sequence — each is permissionless
+      // Order is enforced by contract: slash must run before distribute_rewards.
+      // Each is idempotent — safe to call even if already executed (will revert silently).
       await contractSlashInactive(address, escrow.escrow_id).catch(() => {});
       await contractSlashMinority(address, escrow.escrow_id).catch(() => {});
-      await contractDistributeRewards(address, escrow.escrow_id).catch(() => {});
+      await contractDistributeRewards(address, escrow.escrow_id);
       toast.success('Slashing and rewards distributed');
       await refresh();
     } catch (err) { toast.error(err.message); }
@@ -307,7 +308,7 @@ export default function Arbitration() {
             <div style={{ textAlign: 'center', padding: '3rem', color: '#71717a' }}>
               <Scale size={32} style={{ margin: '0 auto 1rem', opacity: 0.3 }} />
               <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>No disputes in your queue</div>
-              <div style={{ fontSize: '0.82rem' }}>You will appear here when a buyer selects you as an arbitrator and raises a dispute.</div>
+              <div style={{ fontSize: '0.82rem' }}>You will appear here when the protocol assigns you to a dispute based on your stake, reputation, and randomness.</div>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -340,7 +341,7 @@ export default function Arbitration() {
           <div className="card">
             <h3 className="card-title">{isRegistered ? 'Add More Stake' : 'Register as Arbiter'}</h3>
             <p style={{ fontSize: '0.85rem', color: '#71717a', marginBottom: '1.5rem', lineHeight: 1.7 }}>
-              Stake XLM to join the arbiter pool. The protocol assigns arbitrators based on stake weight and reputation — you cannot be hand-picked. Pool capped at 25 arbiters. Max 25% stake concentration per arbiter.
+              Stake XLM to join the arbiter pool. The protocol assigns arbitrators based on stake, reputation, and randomness — you cannot be hand-picked. Selection is probabilistic and cannot be influenced by users. Pool capped at 75 arbiters. Max 25% stake concentration per arbiter.
             </p>
             {isRegistered && (
               <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: '8px', padding: '0.875rem', marginBottom: '1.5rem' }}>
@@ -410,7 +411,7 @@ export default function Arbitration() {
             <h3 className="card-title">Arbitration Rules</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginTop: '0.5rem' }}>
               {[
-                ['01', 'Protocol assigns you', 'When a Mode B escrow is created, the protocol assigns arbitrators based on stake weight and reputation score. Users cannot choose you directly — this prevents collusion.'],
+                ['01', 'Protocol assigns you', 'When a dispute is raised on a Mode B escrow, the protocol assigns arbitrators based on stake, reputation, and randomness. Selection is probabilistic and cannot be influenced by users.'],
                 ['02', 'Vote on disputed escrows', 'When a dispute is raised, you vote Release (pay seller) or Refund (pay buyer). One vote per escrow.'],
                 ['03', 'Majority executes', 'Once majority is reached, anyone calls finalize. The contract executes the decision — no override possible.'],
                 ['04', 'Earn rewards', 'Majority voters split the dispute fee pool. Minority voters lose 20% stake. Note: minority ≠ dishonest — this is a coordination mechanism, not a truth guarantee. Honest disagreement can still be penalized.'],

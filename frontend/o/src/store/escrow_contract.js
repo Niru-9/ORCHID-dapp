@@ -384,6 +384,19 @@ export async function contractGetDisputeSpikeStatus() {
   return readOnly('get_dispute_spike_status', []);
 }
 
+/** System health snapshot: [pool_size, eligible_count, dispute_count, is_paused] */
+export async function contractGetSystemHealth() {
+  return readOnly('get_system_health', []);
+}
+
+/** Paginated escrow fetch. start_id is 1-based. page_size max 50. */
+export async function contractGetEscrowsPaginated(startId, pageSize = 50) {
+  return readOnly('get_escrows_paginated', [
+    u64Val(startId),
+    u64Val(Math.min(pageSize, 50)),
+  ]);
+}
+
 /** Get arbiter reputation score. */
 export async function contractGetArbiterReputation(arbiterAddress) {
   return readOnly('get_arbiter_reputation', [addressVal(arbiterAddress)]);

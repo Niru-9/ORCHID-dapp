@@ -95,15 +95,12 @@ use soroban_sdk::{
 const MIN_ARBITER_STAKE: i128 = 5_000_000_000; // 500 XLM
 
 /// Maximum arbiters in the pool at any time.
-/// Keeps the pool small enough that 500 XLM stake per arbiter is capital-intensive
-/// for a Sybil attacker trying to dominate selection.
-/// To control majority of a 3-person panel: attacker needs >50% of pool.
-/// At 25 arbiters: attacker needs 13 × 500 XLM = 6,500 XLM minimum.
-/// At 500 XLM stake each, dominating a 5-person panel costs 13 × 500 = 6,500 XLM
-/// while the max escrow for that panel is 5 × 500 × 10 = 25,000 XLM.
-/// Attack is still theoretically profitable at scale — this is a Phase 1 limit.
-/// Phase 2: stake concentration limit + reputation gating prevent single-entity dominance.
-const MAX_ARBITER_POOL_SIZE: u32 = 25;
+/// Phase 4: increased to 75 for better entropy and attack resistance.
+/// Sybil attack now requires 38+ identities × 500 XLM = 19,000 XLM minimum.
+/// With 25% concentration cap: attacker needs ≥4 accounts to approach dominance.
+/// Trade-off: larger pool increases gas cost of register_arbiter list scan.
+/// Mitigation: pool cap enforced at registration, not at selection time.
+const MAX_ARBITER_POOL_SIZE: u32 = 75;
 
 /// Maximum stake concentration per arbiter: 25% of total pool stake.
 /// Prevents a single high-capital entity from dominating weighted selection.
@@ -141,7 +138,9 @@ const INACTIVITY_SLASH_BPS: i128 = 1_000;
 const UNSTAKE_COOLDOWN_SECS: u64 = 7 * 24 * 3_600;
 
 /// Dispute spike detection: auto-pause if this many disputes in the window.
-const DISPUTE_SPIKE_LIMIT: u32 = 10;
+/// Phase 4: raised to 50/hour to handle real load without false-positive pauses.
+/// At 75 arbiters, legitimate usage can generate 20-30 disputes/hour.
+const DISPUTE_SPIKE_LIMIT: u32 = 50;
 
 /// Dispute spike window: 1 hour in seconds.
 const DISPUTE_SPIKE_WINDOW: u64 = 3_600;
@@ -156,10 +155,23 @@ const MINORITY_SCALE_FACTOR: i128 = 5;
 /// Maximum minority slash per event: 50% of stake.
 const MAX_MINORITY_SLASH_BPS: i128 = 5_000;
 
-/// Selection noise range in BPS. Applied per slot: noise ∈ [80%, 120%] of weight.
-/// Disrupts pure statistical modeling without dominating stake-based selection.
-const NOISE_MIN_BPS: i128 = 8_000;  // 0.8×
-const NOISE_RANGE_BPS: i128 = 4_000; // range: 0.8 → 1.2
+/// Selection noise range in BPS. Applied per slot: noise ∈ [70%, 130%] of weight.
+/// Wider range than Phase 2 — further disrupts statistical modeling.
+const NOISE_MIN_BPS: i128 = 7_000;   // 0.7×
+const NOISE_RANGE_BPS: i128 = 6_000; // range: 0.7 → 1.3
+
+/// Win ratio threshold for anomaly weight penalty (BPS).
+/// Arbiters with >80% win rate over >10 assignments get ×0.5 weight.
+const ANOMALY_WIN_RATIO_BPS: u32 = 8_000;
+const ANOMALY_MIN_ASSIGNMENTS: u32 = 10;
+
+/// Pair overlap threshold for anomaly weight penalty.
+/// Arbiter pairs that have appeared together >5 times get ×0.5 weight.
+const ANOMALY_PAIR_THRESHOLD: u32 = 5;
+
+/// Reputation decay interval: score decays by 1 per this many escrows of inactivity.
+/// Prevents silent attackers from maintaining neutral score indefinitely.
+const REPUTATION_DECAY_INTERVAL: u64 = 20;
 
 const BPS: i128 = 10_000;
 
@@ -188,6 +200,9 @@ pub enum DataKey {
     ArbiterLastSelected(Address), // escrow_id of last dispute this arbiter was assigned
     ArbiterWins(Address),         // count of disputes where arbiter voted with majority
     ArbiterPairCount(Address, Address), // count of times two arbiters appeared in same panel
+    SlashInactiveDone(u64),       // idempotency guard for slash_inactive
+    SlashMinorityDone(u64),       // idempotency guard for slash_minority
+    RewardsDone(u64),             // idempotency guard for distribute_rewards
 }
 
 // ─── State Machine ────────────────────────────────────────────────────────────
@@ -304,7 +319,7 @@ impl OrchidEscrow {
                 .unwrap_or(Vec::new(&env));
             assert!(
                 list.len() < MAX_ARBITER_POOL_SIZE,
-                "arbiter pool is full — maximum 25 arbiters allowed at this stage"
+                "arbiter pool is full — maximum 75 arbiters allowed at this stage"
             );
         }
 
@@ -792,6 +807,12 @@ impl OrchidEscrow {
             env.ledger().timestamp() >= r.dispute_deadline,
             "dispute deadline not reached yet"
         );
+        // Idempotency guard — prevents double-slashing
+        assert!(
+            !env.storage().persistent().has(&DataKey::SlashInactiveDone(escrow_id)),
+            "slash_inactive already executed for this escrow"
+        );
+        env.storage().persistent().set(&DataKey::SlashInactiveDone(escrow_id), &true);
 
         let mut slash_total: i128 = 0;
 
@@ -858,6 +879,18 @@ impl OrchidEscrow {
             r.status == EscrowStatus::Released || r.status == EscrowStatus::Refunded,
             "must be resolved via arbitration first"
         );
+        // Idempotency guard — prevents double-slashing
+        assert!(
+            !env.storage().persistent().has(&DataKey::SlashMinorityDone(escrow_id)),
+            "slash_minority already executed for this escrow"
+        );
+        // Order enforcement: slash must run before rewards are distributed
+        // to ensure slash proceeds are included in the reward pool.
+        assert!(
+            !env.storage().persistent().has(&DataKey::RewardsDone(escrow_id)),
+            "rewards already distributed — slash_minority must be called before distribute_rewards"
+        );
+        env.storage().persistent().set(&DataKey::SlashMinorityDone(escrow_id), &true);
 
         // Determine which decision was the minority
         let panel_size = r.arbitrators.len();
@@ -928,6 +961,12 @@ impl OrchidEscrow {
             r.status == EscrowStatus::Released || r.status == EscrowStatus::Refunded,
             "must be resolved via arbitration first"
         );
+        // Idempotency guard — prevents double-distribution
+        assert!(
+            !env.storage().persistent().has(&DataKey::RewardsDone(escrow_id)),
+            "rewards already distributed for this escrow"
+        );
+        env.storage().persistent().set(&DataKey::RewardsDone(escrow_id), &true);
 
         let pool: i128 = env.storage().persistent()
             .get(&DataKey::DisputeFeePool(escrow_id)).unwrap_or(0);
@@ -1109,6 +1148,50 @@ impl OrchidEscrow {
         MAX_ARBITER_POOL_SIZE
     }
 
+    /// System health snapshot — single call for monitoring dashboards.
+    /// Returns: (pool_size, eligible_count, dispute_count_in_window, is_paused)
+    pub fn get_system_health(env: Env) -> (u32, u32, u32, bool) {
+        let pool: Vec<Address> = env.storage().instance()
+            .get(&DataKey::ArbiterList)
+            .unwrap_or(Vec::new(&env));
+        let pool_size = pool.len();
+
+        let mut eligible: u32 = 0;
+        for arb in pool.iter() {
+            let stake: i128 = env.storage().persistent()
+                .get(&DataKey::ArbiterLockedStake(arb.clone())).unwrap_or(0);
+            if stake >= MIN_ARBITER_STAKE { eligible += 1; }
+        }
+
+        let dispute_count: u32 = env.storage().instance()
+            .get(&DataKey::DisputeCount).unwrap_or(0);
+        let paused: bool = env.storage().instance()
+            .get(&DataKey::Paused).unwrap_or(false);
+
+        (pool_size, eligible, dispute_count, paused)
+    }
+
+    /// Paginated escrow range — avoids full linear scan at high escrow counts.
+    /// Returns up to `page_size` escrows starting from `start_id`.
+    /// Use for dashboard display at scale. Max page_size = 50.
+    pub fn get_escrows_paginated(
+        env:       Env,
+        start_id:  u64,
+        page_size: u64,
+    ) -> soroban_sdk::Vec<EscrowRecord> {
+        let mut results = soroban_sdk::Vec::new(&env);
+        let total: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
+        let safe_page = page_size.min(50); // hard cap per page
+        let end = (start_id + safe_page - 1).min(total);
+        for i in start_id..=end {
+            if let Some(record) = env.storage().persistent()
+                .get::<DataKey, EscrowRecord>(&DataKey::Escrow(i)) {
+                results.push_back(record);
+            }
+        }
+        results
+    }
+
     /// Get all registered arbiters
     pub fn get_arbiters(env: Env) -> Vec<Address> {
         env.storage().instance()
@@ -1219,6 +1302,7 @@ impl OrchidEscrow {
     }
 
     /// Get all escrows for a specific user (as buyer, seller, or arbitrator)
+    /// WARNING: O(n) gas cost. Use get_user_escrows_paginated at scale.
     pub fn get_user_escrows(env: Env, user: Address) -> soroban_sdk::Vec<EscrowRecord> {
         let mut results = soroban_sdk::Vec::new(&env);
         let total: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
@@ -1246,7 +1330,66 @@ impl OrchidEscrow {
         results
     }
 
-    /// Get only active (non-terminal) escrows
+    /// Paginated user escrows — avoids O(n) full scan at high escrow counts.
+    pub fn get_user_escrows_paginated(
+        env:       Env,
+        user:      Address,
+        start_id:  u64,
+        page_size: u64,
+    ) -> soroban_sdk::Vec<EscrowRecord> {
+        let mut results = soroban_sdk::Vec::new(&env);
+        let total: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
+        let safe_page = page_size.min(50);
+        let mut found: u64 = 0;
+        let mut i = start_id;
+        while i <= total && found < safe_page {
+            if let Some(record) = env.storage().persistent()
+                .get::<DataKey, EscrowRecord>(&DataKey::Escrow(i)) {
+                let mut is_participant = record.buyer == user || record.seller == user;
+                if !is_participant {
+                    for arb in record.arbitrators.iter() {
+                        if arb == user { is_participant = true; break; }
+                    }
+                }
+                if is_participant {
+                    results.push_back(record);
+                    found += 1;
+                }
+            }
+            i += 1;
+        }
+        results
+    }
+    /// Use start_id=1 for first page. Returns up to page_size results.
+    pub fn get_active_escrows_paginated(
+        env:       Env,
+        start_id:  u64,
+        page_size: u64,
+    ) -> soroban_sdk::Vec<EscrowRecord> {
+        let mut results = soroban_sdk::Vec::new(&env);
+        let total: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
+        let safe_page = page_size.min(50);
+        let mut scanned: u64 = 0;
+        let mut i = start_id;
+        while i <= total && scanned < safe_page {
+            if let Some(record) = env.storage().persistent()
+                .get::<DataKey, EscrowRecord>(&DataKey::Escrow(i)) {
+                let is_active = record.status != EscrowStatus::Released
+                    && record.status != EscrowStatus::AutoReleased
+                    && record.status != EscrowStatus::Refunded
+                    && record.status != EscrowStatus::Cancelled;
+                if is_active {
+                    results.push_back(record);
+                    scanned += 1;
+                }
+            }
+            i += 1;
+        }
+        results
+    }
+
+    /// Get only active (non-terminal) escrows — legacy full scan, kept for compat.
+    /// WARNING: O(n) gas cost. Use get_active_escrows_paginated at scale.
     pub fn get_active_escrows(env: Env) -> soroban_sdk::Vec<EscrowRecord> {
         let mut results = soroban_sdk::Vec::new(&env);
         let total: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
@@ -1352,15 +1495,32 @@ impl OrchidEscrow {
             // Reputation gating: exclude arbiters below minimum threshold entirely
             if rep_score < MIN_REPUTATION_FOR_SELECTION { continue; }
 
-            let rep_multiplier = rep_score.max(1); // floor at 1 — never zero weight
+            // Reputation decay: reduce score for arbiters inactive for many escrows.
+            // Prevents silent attackers from maintaining neutral score indefinitely.
+            let decayed_rep = if last_selected > 0 && current_escrow_id > last_selected {
+                let idle_escrows = current_escrow_id.saturating_sub(last_selected);
+                let decay = (idle_escrows / REPUTATION_DECAY_INTERVAL) as i128;
+                rep_score.saturating_sub(decay)
+            } else {
+                rep_score
+            };
 
-            // Pair frequency penalty: reduce weight if this arbiter frequently
-            // appears with already-selected panel members (collusion signal).
-            // Applied as a soft multiplier: weight × (1 - pair_overlap_factor).
-            // pair_overlap_factor = sum(pair_counts with used arbiters) / 100, capped at 0.5.
-            // This is computed after selection to avoid circular dependency.
+            // Re-check gating after decay
+            if decayed_rep < MIN_REPUTATION_FOR_SELECTION { continue; }
 
-            let effective_weight = stake.saturating_mul(rep_multiplier).max(1);
+            let rep_multiplier = decayed_rep.max(1);
+
+            let mut effective_weight = stake.saturating_mul(rep_multiplier).max(1);
+
+            // Anomaly response: win ratio > 80% with >10 assignments → ×0.5 weight
+            let wins: u32 = env.storage().persistent()
+                .get(&DataKey::ArbiterWins(arb.clone())).unwrap_or(0);
+            if total > ANOMALY_MIN_ASSIGNMENTS {
+                let win_ratio = ((wins as u64 * 10_000) / total as u64) as u32;
+                if win_ratio > ANOMALY_WIN_RATIO_BPS {
+                    effective_weight = effective_weight.checked_div(2).unwrap_or(1).max(1);
+                }
+            }
 
             // Cooldown check: was this arbiter selected recently?
             let last_selected: u64 = env.storage().persistent()
@@ -1424,17 +1584,36 @@ impl OrchidEscrow {
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407);
 
-            // Apply per-slot noise to weights: noise ∈ [0.8, 1.2] of base weight
-            // This disrupts pure statistical modeling without dominating stake.
+            // Apply per-slot noise + pair-overlap anomaly penalty to weights
             let mut noised_weights: Vec<i128> = Vec::new(env);
             for wi in 0..weights.len() {
                 let w = weights.get(wi).unwrap();
-                // Noise factor derived from slot_seed + index — different per slot and arbiter
+
+                // Noise: [0.7, 1.3] per slot+arbiter combination
                 let noise_seed = slot_seed.wrapping_add(wi as u64).wrapping_mul(2246822519);
                 let noise_bps = NOISE_MIN_BPS + ((noise_seed % (NOISE_RANGE_BPS as u64)) as i128);
-                let noised = w.checked_mul(noise_bps).expect("overflow")
-                              .checked_div(BPS).expect("div zero")
-                              .max(1);
+                let mut noised = w.checked_mul(noise_bps).expect("overflow")
+                                  .checked_div(BPS).expect("div zero")
+                                  .max(1);
+
+                // Pair-overlap anomaly: if this arbiter has appeared >ANOMALY_PAIR_THRESHOLD
+                // times with any already-selected panel member, halve their weight.
+                let candidate = eligible.get(wi).unwrap();
+                for used_idx in used.iter() {
+                    let already_chosen = eligible.get(used_idx).unwrap();
+                    let (key_a, key_b) = if candidate.to_string() < already_chosen.to_string() {
+                        (candidate.clone(), already_chosen.clone())
+                    } else {
+                        (already_chosen.clone(), candidate.clone())
+                    };
+                    let pair_count: u32 = env.storage().persistent()
+                        .get(&DataKey::ArbiterPairCount(key_a, key_b)).unwrap_or(0);
+                    if pair_count > ANOMALY_PAIR_THRESHOLD {
+                        noised = noised.checked_div(2).unwrap_or(1).max(1);
+                        break;
+                    }
+                }
+
                 noised_weights.push_back(noised);
             }
 

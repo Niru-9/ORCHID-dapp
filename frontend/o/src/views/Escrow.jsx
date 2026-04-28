@@ -99,7 +99,7 @@ export default function Escrow() {
     try {
       const useArbitration = escrowMode === 'B';
       const hash = await createEscrow(seller, amount, asset, description, expiryDays, useArbitration);
-      toast.txSuccess(useArbitration ? 'Escrow created — arbitrators auto-assigned' : 'Trust-minimized escrow created', hash);
+      toast.txSuccess(useArbitration ? 'Escrow created — arbitrators assigned by protocol at dispute time' : 'Trust-minimized escrow created', hash);
       setSeller(''); setAmount(''); setDescription('');
     } catch (err) {
       toast.error(err.message);
@@ -296,7 +296,7 @@ export default function Escrow() {
           <div className="card">
             <h3 className="card-title">Register as Arbiter</h3>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-              Stake XLM to join the arbiter pool. The contract assigns arbitrators automatically based on stake weight and reputation — you cannot be hand-picked by buyers. Pool is capped at 25 arbiters. Max 25% of total pool stake per arbiter.
+              Stake XLM to join the arbiter pool. The protocol assigns arbitrators automatically based on stake, reputation, and randomness — you cannot be hand-picked by buyers. Selection is probabilistic and cannot be influenced by users. Pool capped at 75 arbiters. Max 25% stake per arbiter.
             </p>
             <div style={{ padding: '1rem', background: 'rgba(168,85,247,0.05)', borderRadius: '10px', border: '1px solid rgba(168,85,247,0.15)', marginBottom: '1.5rem' }}>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Minimum Stake</div>
@@ -318,7 +318,7 @@ export default function Escrow() {
             <h3 className="card-title">How Arbitration Works</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '0.5rem' }}>
               {[
-                ['01', 'Register', 'Stake XLM to join the arbiter pool. Your address becomes eligible for auto-assignment.'],
+                ['01', 'Register', 'Stake XLM to join the arbiter pool. Your address becomes eligible for protocol assignment based on stake, reputation, and randomness.'],
                 ['02', 'Get Assigned', 'When a Mode B escrow is created, the protocol assigns arbitrators automatically based on stake weight and reputation score. You cannot be hand-picked — this prevents collusion.'],
                 ['03', 'Vote', 'If a dispute is raised, you vote Release (pay seller) or Refund (pay buyer). One vote per escrow.'],
                 ['04', 'Finalize', 'Once majority is reached, anyone calls finalize. The contract executes — no override possible.'],
@@ -460,12 +460,12 @@ export default function Escrow() {
             {/* Arbitrator Panel — Mode B only */}
             {escrowMode === 'B' && (
               <div style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.2)', borderRadius: '10px', padding: '1rem' }}>
-                <div style={{ fontSize: '0.72rem', color: '#a855f7', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.5rem' }}>Auto-Assignment</div>
+                <div style={{ fontSize: '0.72rem', color: '#a855f7', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.5rem' }}>Protocol Assignment</div>
                 <div style={{ fontSize: '0.85rem', color: '#F5F5F5', fontWeight: 600, marginBottom: '0.35rem' }}>
                   {parseFloat(amount) >= 2000 ? '7 arbitrators' : parseFloat(amount) >= 500 ? '5 arbitrators' : '3 arbitrators'} will be assigned
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#71717a', lineHeight: 1.6 }}>
-                  The protocol assigns arbitrators automatically based on stake weight and reputation. You cannot choose them — this prevents collusion. Panel is locked at creation.
+                  The protocol assigns arbitrators automatically based on stake, reputation, and randomness. You cannot choose them — this prevents collusion. Selection is probabilistic and cannot be influenced by users. Panel is assigned when a dispute is raised.
                 </div>
                 {availableArbiters.length > 0 && (
                   <div style={{ fontSize: '0.72rem', color: '#C9A857', marginTop: '0.5rem' }}>
