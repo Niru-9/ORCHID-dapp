@@ -18,6 +18,8 @@ import {
   contractClaimUnstake,
   contractGetArbiterStats,
   contractGetUnstakeAt,
+  contractGetArbiterReputation,
+  contractGetArbiterMinorityVotes,
 } from '../store/escrow_contract';
 import ConfirmModal from '../components/ConfirmModal';
 import { Scale, ShieldCheck, AlertTriangle, Clock, CheckCircle2, Users, Gavel } from 'lucide-react';
@@ -55,6 +57,7 @@ export default function Arbitration() {
   const [stakeInput, setStakeInput] = useState('');
   const [registering, setRegistering] = useState(false);
   const [myStats, setMyStats] = useState(null);
+  const [myReputation, setMyReputation] = useState(null);
   const [unstakeAt, setUnstakeAt] = useState(0);
   const [unstaking, setUnstaking] = useState(false);
   const [allArbiters, setAllArbiters] = useState([]);
@@ -70,12 +73,13 @@ export default function Arbitration() {
     if (!address) return;
     setLoading(true);
     try {
-      const [stake, arbiters, active, stats, unstake] = await Promise.all([
+      const [stake, arbiters, active, stats, unstake, rep] = await Promise.all([
         contractGetArbiterStake(address).catch(() => 0),
         contractGetArbiters().catch(() => []),
         contractGetActiveEscrows().catch(() => []),
         contractGetArbiterStats(address).catch(() => null),
         contractGetUnstakeAt(address).catch(() => 0),
+        contractGetArbiterReputation(address).catch(() => null),
       ]);
       setMyStake(stake ?? 0);
       setAllArbiters(arbiters ?? []);
@@ -83,6 +87,7 @@ export default function Arbitration() {
       setDisputedEscrows(disputed);
       if (stats) setMyStats({ total: stats[0] ?? 0, missed: stats[1] ?? 0 });
       setUnstakeAt(Number(unstake ?? 0));
+      if (rep !== null) setMyReputation(Number(rep));
     } catch (_) {}
     setLoading(false);
   };
@@ -236,7 +241,11 @@ export default function Arbitration() {
           <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: '10px', padding: '0.75rem 1.25rem', textAlign: 'right', flexShrink: 0 }}>
             <div style={{ fontSize: '0.68rem', color: '#71717a', textTransform: 'uppercase', fontWeight: 700 }}>Your Stake</div>
             <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#4ade80' }}>{fmtXlm(myStake)} XLM</div>
-            <div style={{ fontSize: '0.72rem', color: '#4ade80' }}>Active Arbiter</div>
+            {myReputation !== null && (
+              <div style={{ fontSize: '0.72rem', color: myReputation >= 0 ? '#4ade80' : '#f87171', marginTop: '0.2rem' }}>
+                Rep: {myReputation >= 0 ? '+' : ''}{myReputation}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -331,7 +340,7 @@ export default function Arbitration() {
           <div className="card">
             <h3 className="card-title">{isRegistered ? 'Add More Stake' : 'Register as Arbiter'}</h3>
             <p style={{ fontSize: '0.85rem', color: '#71717a', marginBottom: '1.5rem', lineHeight: 1.7 }}>
-              Stake XLM to join the arbiter pool. When buyers create Mode B escrows, the contract auto-assigns arbiters from this pool. You cannot be hand-picked — selection is pseudo-random. Higher stake = more credibility.
+              Stake XLM to join the arbiter pool. The protocol assigns arbitrators based on stake weight and reputation — you cannot be hand-picked. Pool capped at 25 arbiters. Max 25% stake concentration per arbiter.
             </p>
             {isRegistered && (
               <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: '8px', padding: '0.875rem', marginBottom: '1.5rem' }}>
@@ -401,10 +410,10 @@ export default function Arbitration() {
             <h3 className="card-title">Arbitration Rules</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginTop: '0.5rem' }}>
               {[
-                ['01', 'Contract assigns you', 'When a Mode B escrow is created, the contract selects arbiters pseudo-randomly from the staked pool. Users cannot choose you directly.'],
+                ['01', 'Protocol assigns you', 'When a Mode B escrow is created, the protocol assigns arbitrators based on stake weight and reputation score. Users cannot choose you directly — this prevents collusion.'],
                 ['02', 'Vote on disputed escrows', 'When a dispute is raised, you vote Release (pay seller) or Refund (pay buyer). One vote per escrow.'],
                 ['03', 'Majority executes', 'Once majority is reached, anyone calls finalize. The contract executes the decision — no override possible.'],
-                ['04', 'Earn rewards', 'Majority voters split the dispute fee pool. Minority voters lose 20% stake. Inactive voters lose 10% stake.'],
+                ['04', 'Earn rewards', 'Majority voters split the dispute fee pool. Minority voters lose 20% stake. Note: minority ≠ dishonest — this is a coordination mechanism, not a truth guarantee. Honest disagreement can still be penalized.'],
                 ['05', 'Unstake with cooldown', '7-day cooldown on unstaking. Prevents stake withdrawal immediately after dispute assignment.'],
               ].map(([step, title, desc]) => (
                 <div key={step} style={{ display: 'flex', gap: '1rem' }}>

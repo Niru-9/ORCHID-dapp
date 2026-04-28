@@ -384,6 +384,21 @@ export async function contractGetDisputeSpikeStatus() {
   return readOnly('get_dispute_spike_status', []);
 }
 
+/** Get arbiter reputation score. */
+export async function contractGetArbiterReputation(arbiterAddress) {
+  return readOnly('get_arbiter_reputation', [addressVal(arbiterAddress)]);
+}
+
+/** Get count of minority votes for an arbiter. */
+export async function contractGetArbiterMinorityVotes(arbiterAddress) {
+  return readOnly('get_arbiter_minority_votes', [addressVal(arbiterAddress)]);
+}
+
+/** Get escrow_id of last dispute this arbiter was assigned to. */
+export async function contractGetArbiterLastSelected(arbiterAddress) {
+  return readOnly('get_arbiter_last_selected', [addressVal(arbiterAddress)]);
+}
+
 export async function contractGetRole(userAddress, escrowId) {
   return readOnly('get_role', [addressVal(userAddress), u64Val(escrowId)]);
 }

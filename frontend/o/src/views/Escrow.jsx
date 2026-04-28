@@ -296,7 +296,7 @@ export default function Escrow() {
           <div className="card">
             <h3 className="card-title">Register as Arbiter</h3>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-              Stake XLM to become a trusted arbiter. Once registered, buyers can select you as an arbitrator when creating escrows. Your stake signals commitment — arbiters with higher stakes are more trusted.
+              Stake XLM to join the arbiter pool. The contract assigns arbitrators automatically based on stake weight and reputation — you cannot be hand-picked by buyers. Pool is capped at 25 arbiters. Max 25% of total pool stake per arbiter.
             </p>
             <div style={{ padding: '1rem', background: 'rgba(168,85,247,0.05)', borderRadius: '10px', border: '1px solid rgba(168,85,247,0.15)', marginBottom: '1.5rem' }}>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Minimum Stake</div>
@@ -319,7 +319,7 @@ export default function Escrow() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '0.5rem' }}>
               {[
                 ['01', 'Register', 'Stake XLM to join the arbiter pool. Your address becomes eligible for auto-assignment.'],
-                ['02', 'Get Assigned', 'When a buyer creates a Mode B escrow, the contract selects arbiters automatically. You cannot be hand-picked — selection is pseudo-random from the staked pool.'],
+                ['02', 'Get Assigned', 'When a Mode B escrow is created, the protocol assigns arbitrators automatically based on stake weight and reputation score. You cannot be hand-picked — this prevents collusion.'],
                 ['03', 'Vote', 'If a dispute is raised, you vote Release (pay seller) or Refund (pay buyer). One vote per escrow.'],
                 ['04', 'Finalize', 'Once majority is reached, anyone calls finalize. The contract executes — no override possible.'],
               ].map(([step, title, desc]) => (
@@ -344,7 +344,7 @@ export default function Escrow() {
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{availableArbiters.length} registered</div>
           </div>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
-            These addresses have staked XLM and are eligible for auto-assignment as arbitrators. The contract selects from this pool — users cannot choose specific arbiters.
+            These addresses have staked XLM and are eligible for assignment as arbitrators. The protocol selects from this pool based on stake weight and reputation — users cannot choose specific arbiters.
           </p>
           {availableArbiters.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
@@ -465,7 +465,7 @@ export default function Escrow() {
                   {parseFloat(amount) >= 2000 ? '7 arbitrators' : parseFloat(amount) >= 500 ? '5 arbitrators' : '3 arbitrators'} will be assigned
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#71717a', lineHeight: 1.6 }}>
-                  The contract selects arbitrators automatically from the staked pool. You cannot choose them — this prevents collusion. Panel is locked at creation.
+                  The protocol assigns arbitrators automatically based on stake weight and reputation. You cannot choose them — this prevents collusion. Panel is locked at creation.
                 </div>
                 {availableArbiters.length > 0 && (
                   <div style={{ fontSize: '0.72rem', color: '#C9A857', marginTop: '0.5rem' }}>
