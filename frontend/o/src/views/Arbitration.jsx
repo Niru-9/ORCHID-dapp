@@ -7,22 +7,24 @@ import {
   contractGetArbiterStake,
   contractRegisterArbiter,
   contractVote,
-  contractFinalize,
-  contractForceFinalize,
-  getEscrowsForUser,
   contractGetActiveEscrows,
-  contractSlashInactive,
-  contractSlashMinority,
-  contractDistributeRewards,
+  contractGetEscrow,
+  contractResolveDispute,
+  contractGetResolutionSummary,
   contractRequestUnstake,
   contractClaimUnstake,
   contractGetArbiterStats,
   contractGetUnstakeAt,
   contractGetArbiterReputation,
-  contractGetArbiterMinorityVotes,
+  contractGetSystemHealth,
+  contractGetDisputeSpikeStatus,
+  signalResolutionIntent,
+  getResolutionIntent,
+  trackResolutionExecution,
+  getUserStats,
 } from '../store/escrow_contract';
 import ConfirmModal from '../components/ConfirmModal';
-import { Scale, ShieldCheck, AlertTriangle, Clock, CheckCircle2, Users, Gavel } from 'lucide-react';
+import { Scale, ShieldCheck, AlertTriangle, Clock, CheckCircle2, Users, Gavel, Activity } from 'lucide-react';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -37,16 +39,6 @@ function fmtDeadline(ts) {
   const m = Math.floor((diff % 3_600_000) / 60_000);
   return h > 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : `${h}h ${m}m`;
 }
-
-const STATUS_COLORS = {
-  Funded:      { bg: 'rgba(56,189,248,0.1)',  color: '#38bdf8' },
-  Delivered:   { bg: 'rgba(234,179,8,0.1)',   color: '#eab308' },
-  Disputed:    { bg: 'rgba(239,68,68,0.12)',  color: '#f87171' },
-  Released:    { bg: 'rgba(34,197,94,0.1)',   color: '#4ade80' },
-  AutoReleased:{ bg: 'rgba(34,197,94,0.1)',   color: '#4ade80' },
-  Refunded:    { bg: 'rgba(168,85,247,0.1)',  color: '#a855f7' },
-  Cancelled:   { bg: 'rgba(113,113,122,0.1)', color: '#71717a' },
-};
 
 export default function Arbitration() {
   const { address } = useWalletStore();
@@ -65,6 +57,15 @@ export default function Arbitration() {
   const [loading, setLoading] = useState(false);
   const [processingId, setProcessingId] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
+  const [lastReward, setLastReward] = useState(null); // { escrowId, amount }
+  const [systemHealth, setSystemHealth] = useState(null); // [pool_size, eligible, dispute_count, paused]
+  const [spikeStatus, setSpikeStatus] = useState(null);   // [count, window_start]
+  const [cooldownIds, setCooldownIds] = useState(new Set()); // escrow IDs in post-click cooldown
+  const [activeResolve, setActiveResolve] = useState(false); // global throttle: only 1 resolve at a time
+  // intentMap: escrow_id → { caller, timestamp, intent_count, expires_in_ms, highly_contested, success_chance, reliability_score }
+  // Populated by polling on refresh. Advisory only — never blocks contract execution.
+  const [intentMap, setIntentMap] = useState({});
+  const [myUserStats, setMyUserStats] = useState(null); // PHASE 8: Full user statistics
 
   const isRegistered = myStake !== null && myStake > 0;
 
@@ -73,13 +74,16 @@ export default function Arbitration() {
     if (!address) return;
     setLoading(true);
     try {
-      const [stake, arbiters, active, stats, unstake, rep] = await Promise.all([
+      const [stake, arbiters, active, stats, unstake, rep, health, spike, userStats] = await Promise.all([
         contractGetArbiterStake(address).catch(() => 0),
         contractGetArbiters().catch(() => []),
         contractGetActiveEscrows().catch(() => []),
         contractGetArbiterStats(address).catch(() => null),
         contractGetUnstakeAt(address).catch(() => 0),
         contractGetArbiterReputation(address).catch(() => null),
+        contractGetSystemHealth().catch(() => null),
+        contractGetDisputeSpikeStatus().catch(() => null),
+        getUserStats(address).catch(() => null), // PHASE 8
       ]);
       setMyStake(stake ?? 0);
       setAllArbiters(arbiters ?? []);
@@ -88,6 +92,41 @@ export default function Arbitration() {
       if (stats) setMyStats({ total: stats[0] ?? 0, missed: stats[1] ?? 0 });
       setUnstakeAt(Number(unstake ?? 0));
       if (rep !== null) setMyReputation(Number(rep));
+      if (health) setSystemHealth(health);
+      if (spike) setSpikeStatus(spike);
+      if (userStats) setMyUserStats(userStats); // PHASE 8
+
+      // Fetch intent state for all disputed escrows (advisory coordination)
+      // Fire-and-forget — failures are silent, intentMap stays stale rather than crashing
+      const disputedList = (active ?? []).filter(e => e.status === 'Disputed');
+      if (disputedList.length > 0) {
+        Promise.all(
+          disputedList.map(e =>
+            getResolutionIntent(e.escrow_id).catch(() => null)
+          )
+        ).then(results => {
+          const map = {};
+          results.forEach((r, i) => {
+            if (r?.intent) map[disputedList[i].escrow_id] = {
+              caller:            r.intent.caller,
+              is_arbiter:        r.intent.is_arbiter ?? false,
+              timestamp:         r.intent.timestamp,
+              unique_callers:    r.unique_callers ?? 1,
+              highly_contested:  r.highly_contested ?? false,
+              expires_in_ms:     r.expires_in_ms ?? 0,
+              in_priority_window: r.in_priority_window ?? false,
+              priority_remaining_ms: r.priority_remaining_ms ?? 0,
+              priority_window_secs: r.priority_window_secs ?? 8,
+              success_chance:    r.success_chance ?? 'MEDIUM',
+              reliability_score: r.reliability_score ?? 'UNKNOWN', // PHASE 8
+              low_reliability:   r.low_reliability ?? false, // PHASE 8
+            };
+          });
+          setIntentMap(map);
+        });
+      } else {
+        setIntentMap({});
+      }
     } catch (_) {}
     setLoading(false);
   };
@@ -95,13 +134,48 @@ export default function Arbitration() {
   useEffect(() => { refresh(); }, [address]);
   useEffect(() => { const t = setInterval(refresh, 30_000); return () => clearInterval(t); }, [address]);
 
-  // ── My dispute queue: disputed escrows where I am an arbitrator ────────────
-  const myQueue = disputedEscrows.filter(e =>
-    Array.isArray(e.arbitrators) && e.arbitrators.includes(address)
-  );
+  // ── Constants ─────────────────────────────────────────────────────────────
+  const MIN_FLOOR     = 500_000;   // 0.05 XLM — minimum resolver reward floor
+  const GAS_THRESHOLD = 1_000_000; // 0.1 XLM  — estimated Soroban tx fee ceiling
 
-  // ── All disputed escrows (for overview) ───────────────────────────────────
-  const allDisputed = disputedEscrows;
+  // ── Competition level heuristic ───────────────────────────────────────────
+  // Based purely on reward size — higher reward attracts more bots/users.
+  // Used for display, sorting, and modal warnings. No fake probability shown.
+  const competitionLevel = (reward) => {
+    if (reward > GAS_THRESHOLD * 2) return 'HIGH';
+    if (reward > GAS_THRESHOLD)     return 'MEDIUM';
+    return 'LOW';
+  };
+  const competitionMeta = {
+    HIGH:   { label: 'High competition',     color: '#f87171', bg: 'rgba(239,68,68,0.1)'  },
+    MEDIUM: { label: 'Moderate competition', color: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
+    LOW:    { label: 'Low competition',      color: '#4ade80', bg: 'rgba(34,197,94,0.1)'  },
+  };
+
+  // ── Reward + score helpers ────────────────────────────────────────────────
+  const calcReward = (e) => {
+    const pool = Number(e.dispute_fee_pool || 0);
+    const pct  = Math.floor(pool * 500 / 10_000);
+    return pool > 0 ? Math.min(pool, Math.max(pct, MIN_FLOOR)) : 0;
+  };
+
+  // Sort score = profit / (1 + competition_factor)
+  // Spreads users across disputes — high-competition disputes rank lower.
+  const calcScore = (e) => {
+    const reward = calcReward(e);
+    const profit = reward - GAS_THRESHOLD;
+    const level  = competitionLevel(reward);
+    const factor = level === 'HIGH' ? 1.5 : level === 'MEDIUM' ? 0.5 : 0;
+    return profit / (1 + factor);
+  };
+
+  // ── My dispute queue: disputed escrows where I am an arbitrator ────────────
+  const myQueue = disputedEscrows
+    .filter(e => Array.isArray(e.arbitrators) && e.arbitrators.includes(address))
+    .sort((a, b) => calcScore(b) - calcScore(a));
+
+  // ── All disputed escrows — sorted by competition-adjusted score ────────────
+  const allDisputed = [...disputedEscrows].sort((a, b) => calcScore(b) - calcScore(a));
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleRegister = async (e) => {
@@ -135,54 +209,313 @@ export default function Arbitration() {
     });
   };
 
-  const handleFinalize = (escrow) => {
+  const handleResolveDispute = async (escrow) => {
+    // ── SECTION 5: Global throttle — only 1 active resolve attempt at a time ─
+    if (activeResolve) {
+      toast.error('You already have an active resolution attempt. Wait for it to complete.');
+      return;
+    }
+
+    const feePool         = Number(escrow.dispute_fee_pool || 0);
+    const pct             = Math.floor(feePool * 500 / 10_000);
+    const estimatedReward = feePool > 0 ? Math.min(feePool, Math.max(pct, MIN_FLOOR)) : 0;
+    const hasReward       = estimatedReward > 0;
+    const isLowPool       = feePool > 0 && feePool < MIN_FLOOR;
+    const estimatedProfit = estimatedReward - GAS_THRESHOLD;
+    const belowGas        = hasReward && estimatedReward < GAS_THRESHOLD;
+    const compLevel       = competitionLevel(estimatedReward);
+    const compMeta        = competitionMeta[compLevel];
+
+    // ── SECTION 1: Pre-flight state check ─────────────────────────────────
+    try {
+      const live = await contractGetEscrow(escrow.escrow_id);
+      if (!live || live.status !== 'Disputed') {
+        toast.error('This dispute has already been finalized.');
+        await refresh();
+        return;
+      }
+    } catch (_) { /* proceed — contract will reject if already resolved */ }
+
+    // ── SECTION 1: Get caller balance for minimum balance check ───────────
+    // Fetch from wallet store or contract
+    const callerBalance = useWalletStore.getState().balance ?? 0;
+    
+    // PHASE 10: Get stake amount for priority weighting
+    const stakeAmount = myStake ?? 0;
+    
+    // PHASE 10 HARDENING — SECTION 1: Get escrow arbitrators for real authority check
+    const escrowArbitrators = escrow.arbitrators || [];
+
+    // ── Signal resolution intent (advisory — does not block anyone) ────────
+    // Fires after pre-flight passes. Other users will see this on their next
+    // refresh and be warned before they attempt execution.
+    // Pass isRegistered so backend can label this as "Arbiter attempting resolution".
+    // SECTION 3: Pass reward for dynamic priority window calculation
+    // PHASE 10: Pass stake amount for priority weighting
+    // PHASE 10 HARDENING: Pass escrow arbitrators for real arbiter check
+    const intentResult = await signalResolutionIntent(
+      address, 
+      escrow.escrow_id, 
+      isRegistered,
+      estimatedReward,    // SECTION 3: for dynamic priority window
+      callerBalance,      // SECTION 1: for balance check
+      stakeAmount,        // PHASE 10: for stake weighting
+      escrowArbitrators   // PHASE 10 HARDENING: for real arbiter check
+    ).catch(() => null);
+
+    // PHASE 9: Handle restriction error
+    if (intentResult?.error === 'Account restricted due to repeated failures') {
+      toast.error(`⛔ Account restricted: ${intentResult.failure_score} failures. Wait ${intentResult.restriction_duration_secs}s before attempting again.`);
+      return;
+    }
+    
+    // PHASE 10 FIX — SECTION 5: Handle bond blocking
+    if (intentResult?.error === 'Intent blocked due to excessive bond losses') {
+      toast.error(`⛔ Intent blocked: ${intentResult.bond_lost} abandoned intents. Wait ${intentResult.block_duration_secs}s.`);
+      return;
+    }
+
+    // PHASE 9: Handle rate limit error
+    if (intentResult?.error === 'Rate limit exceeded') {
+      toast.error(`⚠ Rate limit: Max ${intentResult.max_intents_per_minute} intents/minute. Slow down.`);
+      return;
+    }
+
+    // PHASE 8: Handle cooldown error
+    if (intentResult?.error === 'Intent cooldown active') {
+      const retrySeconds = Math.ceil((intentResult.retry_after_ms ?? 5000) / 1000);
+      const escalationMsg = intentResult.escalation_reason === 'repeated failures' 
+        ? ` (escalated due to failures)` 
+        : '';
+      toast.error(`Intent cooldown: ${retrySeconds}s${escalationMsg}`);
+      return;
+    }
+
+    // SECTION 1: Check for insufficient balance
+    if (intentResult?.insufficient_balance) {
+      toast.error(`Insufficient balance to signal intent. Minimum: ${fmtXlm(intentResult.required_balance ?? 1_000_000)} XLM`);
+      return;
+    }
+
+    // PHASE 8: Show reliability warnings
+    if (intentResult?.low_reliability) {
+      toast.error('⚠ Your reliability score is LOW. Consider improving your execution rate.');
+    }
+
+    // PHASE 9: Show failure score warning
+    if (intentResult?.failure_score >= 5) {
+      toast.error(`⚠ Failure score: ${intentResult.failure_score}. Cooldown escalated to ${intentResult.escalated_cooldown}s.`);
+    }
+
+    // PHASE 9: Show decay penalty warning
+    if (intentResult?.decay_penalty < 0) {
+      toast.error(`⚠ Intent decay penalty: ${intentResult.decay_penalty} (high abandon rate)`);
+    }
+
+    // PHASE 10 FIX — SECTION 5: Show bond warnings at different thresholds
+    if (intentResult?.bond_lost >= 6) {
+      toast.error(`⛔ Critical: ${intentResult.bond_lost} abandoned intents. Priority penalty: -4.`);
+    } else if (intentResult?.bond_lost >= 3) {
+      toast.error(`⚠ Warning: ${intentResult.bond_lost} abandoned intents. Priority penalty: -2.`);
+    }
+
+    // PHASE 10 FIX — SECTION 3: Show non-staked penalty
+    if (intentResult?.stake_weight === 0 && !isRegistered) {
+      toast.error(`⚠ No stake: Priority penalty -4. Consider staking to improve priority.`);
+    }
+
+    // PHASE 10: Show stake advantage
+    if (intentResult?.priority_level === 'HIGH_PRIORITY') {
+      toast.success(`✓ High priority resolver (stake: ${intentResult.stake_amount_xlm} XLM)`);
+    }
+
+    // Optimistically update local intentMap so UI reflects immediately
+    // SECTION 3: Include dynamic priority window
+    const priorityWindowSecs = intentResult?.priority_window_secs ?? 8;
+    setIntentMap(prev => ({
+      ...prev,
+      [escrow.escrow_id]: {
+        caller:            address,
+        is_arbiter:        isRegistered,
+        timestamp:         Date.now(),
+        unique_callers:    (prev[escrow.escrow_id]?.unique_callers ?? 0) + 1,
+        highly_contested:  intentResult?.highly_contested ?? false, // SECTION 4
+        expires_in_ms:     12_000,
+        in_priority_window: true,
+        priority_remaining_ms: priorityWindowSecs * 1000,
+        priority_window_secs: priorityWindowSecs, // SECTION 3
+        success_chance:    intentResult?.success_chance ?? 'MEDIUM', // SECTION 5
+        reliability_score: intentResult?.reliability_score ?? 'UNKNOWN', // PHASE 8
+        low_reliability:   intentResult?.low_reliability ?? false, // PHASE 8
+      },
+    }));
+
+    // If priority window blocked us, warn but don't stop — execution is still permissionless
+    if (intentResult?.blocked) {
+      const secLeft = Math.ceil((intentResult.priority_remaining_ms ?? 0) / 1000);
+      const who = intentResult.is_arbiter ? 'An arbiter' : 'Another participant';
+      // PHASE 10 HARDENING — SECTION 1: Show real arbiter override message
+      if (intentResult.is_override || intentResult.arbiter_override) {
+        toast.success(`✓ Assigned arbiter override: You have absolute priority on this dispute`);
+      } else {
+        // PHASE 10 HARDENING — SECTION 5: Updated messaging - remove "you can still proceed"
+        if (intentResult.reason === 'Higher priority resolver exists') {
+          toast.error(`⛔ Lower priority — high risk of losing execution race. ${who} has higher priority (score: ${intentResult.existing_priority_score} vs yours: ${intentResult.your_priority_score}). Margin: ${intentResult.priority_margin_required}.`);
+        } else if (intentResult.your_stake_weight !== undefined && intentResult.existing_stake_weight !== undefined) {
+          toast.error(`⛔ Lower priority — high risk of losing execution race. ${who} has higher stake (${intentResult.existing_stake_weight} vs yours: ${intentResult.your_stake_weight}).`);
+        } else {
+          toast.error(`⛔ Lower priority — high risk of losing execution race. ${who} has priority for ~${secLeft}s.`);
+        }
+      }
+    }
+
+    // SECTION 4: Multi-intent signal — auto-disable for 3 seconds if highly contested
+    if (intentResult?.highly_contested) {
+      toast.error(`⚠ Highly contested — ${intentResult.unique_callers} participants competing. Waiting 3 seconds...`);
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    
+    // PHASE 10 HARDENING — SECTION 4: Apply execution delay for low priority
+    // Reduces bot advantage without blocking execution
+    if (intentResult?.blocked && intentResult.your_priority_score < intentResult.existing_priority_score) {
+      const delayMs = 150 + Math.floor(Math.random() * 250); // 150-400ms randomized
+      toast.error(`⏱ Low priority delay: ${delayMs}ms`);
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+
+    // ── Low-reward guard: require "CONFIRM LOSS" typed ─────────────────────
+    if (belowGas) {
+      const input = window.prompt(
+        `⚠ This reward will likely not cover transaction fees.\n\n` +
+        `Estimated reward:  ${fmtXlm(estimatedReward)} XLM\n` +
+        `Estimated gas:    ~${fmtXlm(GAS_THRESHOLD)} XLM\n` +
+        `Estimated profit:  ${fmtXlm(estimatedProfit)} XLM  ← NEGATIVE\n\n` +
+        `Type CONFIRM LOSS to proceed anyway:`
+      );
+      if ((input ?? '').trim() !== 'CONFIRM LOSS') return;
+    }
+
+    // ── Build modal message ────────────────────────────────────────────────
+    const rewardLine = !hasReward
+      ? `Resolver reward: No reward available (empty pool)`
+      : isLowPool
+        ? `Resolver reward (est.): ${fmtXlm(estimatedReward)} XLM — low pool, may not cover gas`
+        : `Resolver reward (est.): ${fmtXlm(estimatedReward)} XLM (not guaranteed)`;
+
+    const competitionWarning = compLevel === 'HIGH'
+      ? `⚠ High competition: multiple users likely competing. You may not receive the reward even if you execute.`
+      : compLevel === 'MEDIUM'
+        ? `⚠ Moderate competition: some users may attempt this simultaneously.`
+        : null;
+
+    // SECTION 5: Add success chance hint
+    const successChanceHint = intentResult?.success_chance 
+      ? `\nEstimated success chance: ${intentResult.success_chance}`
+      : '';
+
     setConfirmModal({
-      title: 'Finalize Dispute',
-      message: `Majority has been reached for escrow #${escrow.escrow_id}.\n\nRelease votes: ${escrow.votes_release}  |  Refund votes: ${escrow.votes_refund}\n\nThis will execute the decision on-chain.`,
-      confirmLabel: 'Finalize',
+      title: 'Resolve Dispute',
+      message: [
+        `Escrow #${escrow.escrow_id} — atomically executes all resolution steps:`,
+        ``,
+        `  1. Transfer funds (release to seller or refund to buyer)`,
+        `  2. Slash inactive arbiters`,
+        `  3. Slash minority voters`,
+        `  4. Distribute rewards to majority voters`,
+        ``,
+        `⚠ Execution is competitive: You are competing with other participants`,
+        `  for this execution. Only the first successful transaction receives`,
+        `  the reward. Final outcome depends on being the first successful caller.`,
+        ``,
+        `Competition level: ${compMeta.label}`,
+        ...(competitionWarning ? [competitionWarning] : []),
+        successChanceHint, // SECTION 5
+        ``,
+        `Why resolve this dispute?`,
+        `  • May earn a reward from the dispute pool (if available)`,
+        `  • Finalize a stuck escrow transaction`,
+        `  • Permissionless — anyone can execute`,
+        ``,
+        rewardLine,
+        ``,
+        `This is irreversible and can only run once.`,
+      ].join('\n'),
+      confirmLabel: estimatedProfit < 0
+        ? 'Resolve (Likely Loss)'
+        : hasReward
+          ? `Resolve (${compMeta.label})`
+          : 'Resolve Dispute',
       danger: false,
       onConfirm: async () => {
         setProcessingId(escrow.escrow_id);
+        setActiveResolve(true);
+
+        // ── SECTION 2: Double-check state inside onConfirm ─────────────────
         try {
-          await contractFinalize(address, escrow.escrow_id);
-          toast.txSuccess('Dispute finalized', '');
+          const live = await contractGetEscrow(escrow.escrow_id);
+          if (!live || live.status !== 'Disputed') {
+            toast.error('This dispute has already been finalized.');
+            setProcessingId(null);
+            setActiveResolve(false);
+            await refresh();
+            return;
+          }
+        } catch (_) { /* proceed */ }
+
+        // ── SECTION 4: Mark escrow as pending locally ──────────────────────
+        // ── SECTION 6: Cool-off — disable button for dynamic window ───────
+        const cooloffSecs = priorityWindowSecs; // Use dynamic window for cooldown
+        setCooldownIds(prev => new Set(prev).add(escrow.escrow_id));
+        setTimeout(() => {
+          setCooldownIds(prev => { const s = new Set(prev); s.delete(escrow.escrow_id); return s; });
+        }, cooloffSecs * 1000);
+
+        // Soft random delay — reduces deterministic bot edge
+        const jitter = 50 + Math.floor(Math.random() * 150);
+        await new Promise(r => setTimeout(r, jitter));
+
+        try {
+          await contractResolveDispute(address, escrow.escrow_id);
+          
+          // PHASE 8: Track successful execution
+          await trackResolutionExecution(address, escrow.escrow_id, true).catch(() => {});
+
+          const summary = await contractGetResolutionSummary(escrow.escrow_id).catch(() => null);
+          if (summary) {
+            const actualReward = Number(summary.resolver_reward ?? 0);
+            const outcome      = String(summary.outcome ?? '');
+            const outcomeLabel = outcome === 'release' ? 'Funds released to seller' : 'Refunded to buyer';
+            setLastReward({
+              escrowId:     escrow.escrow_id,
+              amount:       actualReward,
+              outcome:      outcomeLabel,
+              totalPool:    Number(summary.total_pool    ?? 0),
+              totalSlashed: Number(summary.total_slashed ?? 0),
+              resolver:     String(summary.resolver ?? address),
+            });
+            toast.txSuccess(`Dispute resolved — you earned ${fmtXlm(actualReward)} XLM`, '');
+          } else {
+            setLastReward({ escrowId: escrow.escrow_id, summaryUnavailable: true });
+            toast.success('Resolution complete. Check transaction for reward details.');
+          }
           await refresh();
-        } catch (err) { toast.error(err.message); }
+        } catch (err) {
+          // PHASE 8: Track failed execution
+          await trackResolutionExecution(address, escrow.escrow_id, false).catch(() => {});
+          
+          const msg = err.message ?? '';
+          if (msg.includes('already resolved') || msg.includes('EscrowResolved')) {
+            toast.error('This dispute has already been finalized.');
+          } else if (msg.includes('not in Disputed')) {
+            toast.error('Another participant finalized this dispute before your transaction was confirmed. This can happen during high competition.');
+          } else {
+            toast.error(msg);
+          }
+        }
         setProcessingId(null);
+        setActiveResolve(false);
       },
     });
-  };
-
-  const handleForceFinalize = (escrow) => {
-    setConfirmModal({
-      title: 'Force Finalize',
-      message: `Arbitration deadline has passed for escrow #${escrow.escrow_id}.\n\nThis will refund the buyer. Irreversible.`,
-      confirmLabel: 'Force Finalize',
-      danger: true,
-      onConfirm: async () => {
-        setProcessingId(escrow.escrow_id);
-        try {
-          await contractForceFinalize(address, escrow.escrow_id);
-          toast.txSuccess('Force finalized — buyer refunded', '');
-          await refresh();
-        } catch (err) { toast.error(err.message); }
-        setProcessingId(null);
-      },
-    });
-  };
-
-  const handleSlashAndReward = async (escrow) => {
-    setProcessingId(escrow.escrow_id);
-    try {
-      // Order is enforced by contract: slash must run before distribute_rewards.
-      // Each is idempotent — safe to call even if already executed (will revert silently).
-      await contractSlashInactive(address, escrow.escrow_id).catch(() => {});
-      await contractSlashMinority(address, escrow.escrow_id).catch(() => {});
-      await contractDistributeRewards(address, escrow.escrow_id);
-      toast.success('Slashing and rewards distributed');
-      await refresh();
-    } catch (err) { toast.error(err.message); }
-    setProcessingId(null);
   };
 
   const handleRequestUnstake = async () => {
@@ -247,6 +580,45 @@ export default function Arbitration() {
                 Rep: {myReputation >= 0 ? '+' : ''}{myReputation}
               </div>
             )}
+            {/* PHASE 8 & 9: Full reliability display with badge and restrictions */}
+            {myUserStats && myUserStats.total_intents > 0 && (
+              <div style={{ marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.2rem', alignItems: 'flex-end' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span style={{ 
+                    fontSize: '0.65rem', 
+                    fontWeight: 700,
+                    padding: '0.15rem 0.5rem',
+                    borderRadius: '999px',
+                    background: myUserStats.reliability_score === 'HIGH' ? 'rgba(34,197,94,0.15)' : 
+                                myUserStats.reliability_score === 'MEDIUM' ? 'rgba(245,158,11,0.15)' :
+                                myUserStats.reliability_score === 'LOW' ? 'rgba(239,68,68,0.15)' : 'rgba(113,113,122,0.15)',
+                    color: myUserStats.reliability_score === 'HIGH' ? '#4ade80' : 
+                           myUserStats.reliability_score === 'MEDIUM' ? '#f59e0b' :
+                           myUserStats.reliability_score === 'LOW' ? '#f87171' : '#71717a',
+                  }}>
+                    {myUserStats.reliability_score}
+                  </span>
+                  <span style={{ fontSize: '0.7rem', color: '#71717a' }}>
+                    {myUserStats.successful_resolutions}/{myUserStats.total_intents} ({Math.round(myUserStats.success_rate * 100)}%)
+                  </span>
+                </div>
+                {/* PHASE 9: Restriction warning */}
+                {myUserStats.restricted && (
+                  <span style={{ fontSize: '0.65rem', color: '#f87171', fontWeight: 700 }}>
+                    ⛔ RESTRICTED ({myUserStats.restriction_duration}s)
+                  </span>
+                )}
+                {/* PHASE 9: Failure score display */}
+                {myUserStats.failure_score >= 5 && !myUserStats.restricted && (
+                  <span style={{ fontSize: '0.65rem', color: '#f59e0b' }}>
+                    ⚠ Failures: {myUserStats.failure_score} (cooldown: {myUserStats.escalated_cooldown}s)
+                  </span>
+                )}
+                {myUserStats.low_reliability && !myUserStats.restricted && (
+                  <span style={{ fontSize: '0.65rem', color: '#f87171' }}>⚠ Low reliability</span>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -269,6 +641,46 @@ export default function Arbitration() {
         ))}
       </div>
 
+      {/* ── Last reward banner ── */}
+      {lastReward && (
+        <div style={{ background: lastReward.summaryUnavailable ? 'rgba(245,158,11,0.08)' : 'rgba(34,197,94,0.08)', border: lastReward.summaryUnavailable ? '1px solid rgba(245,158,11,0.25)' : '1px solid rgba(34,197,94,0.25)', borderRadius: '10px', padding: '0.875rem 1.25rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.6rem' }}>
+                <CheckCircle2 size={15} color={lastReward.summaryUnavailable ? '#f59e0b' : '#4ade80'} />
+                <span style={{ fontSize: '0.875rem', color: lastReward.summaryUnavailable ? '#f59e0b' : '#4ade80', fontWeight: 700 }}>
+                  Escrow #{lastReward.escrowId} Resolved
+                </span>
+              </div>
+              {lastReward.summaryUnavailable ? (
+                <div style={{ fontSize: '0.78rem', color: '#f59e0b', lineHeight: 1.6 }}>
+                  Resolution complete. Reward data unavailable — check transaction details on-chain.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {/* Actual reward — highlighted prominently */}
+                  <div style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: '8px', padding: '0.6rem 0.875rem', display: 'inline-flex', alignItems: 'baseline', gap: '0.5rem' }}>
+                    <span style={{ fontSize: '0.68rem', color: '#4ade80', textTransform: 'uppercase', fontWeight: 700 }}>Reward Earned</span>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 700, color: '#4ade80' }}>{fmtXlm(lastReward.amount)} XLM</span>
+                  </div>
+                  {/* Resolution details grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.35rem 1.5rem', fontSize: '0.75rem', color: '#71717a', marginTop: '0.25rem' }}>
+                    <div><span style={{ color: '#a1a1aa', fontWeight: 600 }}>Outcome: </span>{lastReward.outcome}</div>
+                    <div><span style={{ color: '#a1a1aa', fontWeight: 600 }}>Total Pool: </span>{fmtXlm(lastReward.totalPool)} XLM</div>
+                    <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.7rem' }}>
+                      <span style={{ color: '#a1a1aa', fontWeight: 600, fontFamily: 'inherit' }}>Resolved by: </span>
+                      {fmtAddr(lastReward.resolver)}
+                    </div>
+                    <div><span style={{ color: '#a1a1aa', fontWeight: 600 }}>Total Slashed: </span>{fmtXlm(lastReward.totalSlashed)} XLM</div>
+                  </div>
+                </div>
+              )}
+            </div>
+            <button onClick={() => setLastReward(null)} style={{ background: 'none', border: 'none', color: '#71717a', cursor: 'pointer', fontSize: '1.2rem', lineHeight: 1, padding: 0, flexShrink: 0 }}>×</button>
+          </div>
+        </div>
+      )}
+
       {/* ── Tabs ── */}
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '2rem', borderBottom: '1px solid #27272A' }}>
         {[
@@ -276,6 +688,7 @@ export default function Arbitration() {
           ['all',      'All Disputes',     allDisputed.length],
           ['register', 'Register / Stake', null],
           ['arbiters', 'Arbiter Registry', allArbiters.length],
+          ['system',   'System Health',    null],
         ].map(([id, label, count]) => (
           <button key={id} onClick={() => setTab(id)} style={{
             padding: '0.75rem 1rem', background: 'none', border: 'none', cursor: 'pointer',
@@ -312,8 +725,7 @@ export default function Arbitration() {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {myQueue.map((e) => <DisputeCard key={e.escrow_id} e={e} address={address} processingId={processingId} onVote={handleVote} onFinalize={handleFinalize} onForceFinalize={handleForceFinalize} onSlashReward={handleSlashAndReward} hasMajority={hasMajority} deadlinePassed={deadlinePassed} />)}
-            </div>
+              {myQueue.map((e) => <DisputeCard key={e.escrow_id} e={e} address={address} processingId={processingId} cooldownIds={cooldownIds} intentMap={intentMap} onVote={handleVote} onResolveDispute={handleResolveDispute} hasMajority={hasMajority} deadlinePassed={deadlinePassed} />)}            </div>
           )}
         </div>
       )}
@@ -329,7 +741,7 @@ export default function Arbitration() {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {allDisputed.map((e) => <DisputeCard key={e.escrow_id} e={e} address={address} processingId={processingId} onVote={handleVote} onFinalize={handleFinalize} onForceFinalize={handleForceFinalize} onSlashReward={handleSlashAndReward} hasMajority={hasMajority} deadlinePassed={deadlinePassed} />)}
+              {allDisputed.map((e) => <DisputeCard key={e.escrow_id} e={e} address={address} processingId={processingId} cooldownIds={cooldownIds} intentMap={intentMap} onVote={handleVote} onResolveDispute={handleResolveDispute} hasMajority={hasMajority} deadlinePassed={deadlinePassed} />)}
             </div>
           )}
         </div>
@@ -413,8 +825,8 @@ export default function Arbitration() {
               {[
                 ['01', 'Protocol assigns you', 'When a dispute is raised on a Mode B escrow, the protocol assigns arbitrators based on stake, reputation, and randomness. Selection is probabilistic and cannot be influenced by users.'],
                 ['02', 'Vote on disputed escrows', 'When a dispute is raised, you vote Release (pay seller) or Refund (pay buyer). One vote per escrow.'],
-                ['03', 'Majority executes', 'Once majority is reached, anyone calls finalize. The contract executes the decision — no override possible.'],
-                ['04', 'Earn rewards', 'Majority voters split the dispute fee pool. Minority voters lose 20% stake. Note: minority ≠ dishonest — this is a coordination mechanism, not a truth guarantee. Honest disagreement can still be penalized.'],
+                ['03', 'Majority executes', 'Once majority is reached, anyone calls resolve_dispute. The contract executes the decision atomically — no override possible.'],
+                ['04', 'Earn rewards', 'Majority voters split the dispute fee pool (after resolver cut). Minority voters lose 20% stake. Note: minority ≠ dishonest — this is a coordination mechanism, not a truth guarantee.'],
                 ['05', 'Unstake with cooldown', '7-day cooldown on unstaking. Prevents stake withdrawal immediately after dispute assignment.'],
               ].map(([step, title, desc]) => (
                 <div key={step} style={{ display: 'flex', gap: '1rem' }}>
@@ -425,6 +837,31 @@ export default function Arbitration() {
                   </div>
                 </div>
               ))}
+            </div>
+
+            {/* Mode A / Mode B explanation */}
+            <div style={{ marginTop: '1.75rem', borderTop: '1px solid #27272A', paddingTop: '1.25rem' }}>
+              <div style={{ fontSize: '0.7rem', color: '#71717a', textTransform: 'uppercase', fontWeight: 700, marginBottom: '1rem' }}>Escrow Modes</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.15)', borderRadius: '8px', padding: '0.875rem' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#60a5fa', marginBottom: '0.5rem' }}>MODE A — Trust-Minimized</div>
+                  <div style={{ fontSize: '0.75rem', color: '#71717a', lineHeight: 1.6 }}>
+                    No arbitration. Direct settlement only.<br />
+                    Buyer confirms or cancels.<br />
+                    Max escrow: 500 XLM.<br />
+                    No dispute path available.
+                  </div>
+                </div>
+                <div style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.15)', borderRadius: '8px', padding: '0.875rem' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#a855f7', marginBottom: '0.5rem' }}>MODE B — Arbitration</div>
+                  <div style={{ fontSize: '0.75rem', color: '#71717a', lineHeight: 1.6 }}>
+                    Panel assigned at dispute time.<br />
+                    Arbiters vote Release or Refund.<br />
+                    resolve_dispute executes atomically.<br />
+                    Required above 500 XLM.
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -467,12 +904,117 @@ export default function Arbitration() {
           )}
         </div>
       )}
+      {/* ── SYSTEM HEALTH ── */}
+      {tab === 'system' && (() => {
+        const poolSize    = systemHealth ? Number(systemHealth[0]) : null;
+        const eligible    = systemHealth ? Number(systemHealth[1]) : null;
+        const dispCount   = systemHealth ? Number(systemHealth[2]) : null;
+        const isPaused    = systemHealth ? Boolean(systemHealth[3]) : null;
+        const spikeCount  = spikeStatus  ? Number(spikeStatus[0])  : null;
+        const SPIKE_LIMIT = 50;
+        const spikeRatio  = spikeCount !== null ? spikeCount / SPIKE_LIMIT : 0;
+        const spikeWarn   = spikeRatio >= 0.7;
+
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            {loading && <div style={{ color: '#71717a', fontSize: '0.85rem' }}>Syncing from chain...</div>}
+
+            {/* Paused banner */}
+            {isPaused && (
+              <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '10px', padding: '0.875rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <AlertTriangle size={16} color="#f87171" />
+                <span style={{ fontSize: '0.875rem', color: '#f87171', fontWeight: 600 }}>Contract is paused — no new escrows or disputes can be created</span>
+              </div>
+            )}
+
+            {/* Health grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+              {[
+                { label: 'Pool Size',         value: poolSize  ?? '—', color: '#60a5fa', icon: Users },
+                { label: 'Eligible Arbiters', value: eligible  ?? '—', color: '#4ade80', icon: ShieldCheck },
+                { label: 'Active Disputes',   value: dispCount ?? '—', color: '#f87171', icon: Gavel },
+                { label: 'System Status',     value: isPaused === null ? '—' : isPaused ? 'PAUSED' : 'ACTIVE', color: isPaused ? '#f87171' : '#4ade80', icon: Activity },
+              ].map((s, i) => (
+                <div key={i} style={{ background: '#1C1C1F', border: '1px solid #27272A', borderRadius: '12px', padding: '1.25rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                    <s.icon size={14} color={s.color} />
+                    <span style={{ fontSize: '0.68rem', color: '#71717a', textTransform: 'uppercase', fontWeight: 700 }}>{s.label}</span>
+                  </div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: s.color }}>{s.value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Spike monitor */}
+            <div className="card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
+                <Activity size={15} color={spikeWarn ? '#f59e0b' : '#71717a'} />
+                <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Dispute Spike Monitor</span>
+                {spikeWarn && (
+                  <span style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b', borderRadius: '999px', padding: '0.1rem 0.5rem', fontSize: '0.65rem', fontWeight: 700 }}>WARNING</span>
+                )}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: '#71717a', marginBottom: '1rem', lineHeight: 1.6 }}>
+                Contract auto-pauses if {SPIKE_LIMIT} disputes occur within 1 hour. Current window: {spikeCount ?? '—'} / {SPIKE_LIMIT}.
+              </div>
+              {/* Progress bar */}
+              <div style={{ height: '8px', borderRadius: '999px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  width: `${Math.min(spikeRatio * 100, 100)}%`,
+                  background: spikeRatio >= 0.9 ? '#ef4444' : spikeRatio >= 0.7 ? '#f59e0b' : '#4ade80',
+                  transition: 'width 0.4s',
+                  borderRadius: '999px',
+                }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.4rem' }}>
+                <span style={{ fontSize: '0.68rem', color: '#71717a' }}>0</span>
+                <span style={{ fontSize: '0.68rem', color: spikeWarn ? '#f59e0b' : '#71717a' }}>{spikeCount ?? 0} disputes this hour</span>
+                <span style={{ fontSize: '0.68rem', color: '#71717a' }}>{SPIKE_LIMIT} (limit)</span>
+              </div>
+            </div>
+
+            {/* Execution model explanation */}
+            <div className="card">
+              <div style={{ fontSize: '0.7rem', color: '#71717a', textTransform: 'uppercase', fontWeight: 700, marginBottom: '1rem' }}>Execution Model</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div style={{ background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.15)', borderRadius: '8px', padding: '0.875rem' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#60a5fa', marginBottom: '0.5rem' }}>MODE A — Trust-Minimized</div>
+                  <div style={{ fontSize: '0.75rem', color: '#71717a', lineHeight: 1.7 }}>
+                    No arbitration. Direct settlement only.<br />
+                    Buyer confirms or cancels before deadline.<br />
+                    Max escrow: 500 XLM.<br />
+                    No dispute path available.
+                  </div>
+                </div>
+                <div style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.15)', borderRadius: '8px', padding: '0.875rem' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#a855f7', marginBottom: '0.5rem' }}>MODE B — Arbitration</div>
+                  <div style={{ fontSize: '0.75rem', color: '#71717a', lineHeight: 1.7 }}>
+                    Panel assigned at dispute time.<br />
+                    Arbiters vote Release or Refund.<br />
+                    resolve_dispute executes atomically.<br />
+                    Anyone can call — earns resolver reward.<br />
+                    Required above 500 XLM.
+                  </div>
+                </div>
+              </div>
+              <div style={{ marginTop: '1rem', background: 'rgba(201,168,87,0.06)', border: '1px solid rgba(201,168,87,0.15)', borderRadius: '8px', padding: '0.875rem' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#C9A857', marginBottom: '0.4rem' }}>Resolver Incentive</div>
+                <div style={{ fontSize: '0.75rem', color: '#71717a', lineHeight: 1.6 }}>
+                  Anyone can call resolve_dispute and earn a reward: max(5% of fee pool, 0.05 XLM minimum), capped at the pool balance. Reward comes only from the fee/slash pool — no inflation, escrow principal is never touched.
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
     </motion.div>
   );
 }
 
 // ── DisputeCard ───────────────────────────────────────────────────────────────
-function DisputeCard({ e, address, processingId, onVote, onFinalize, onForceFinalize, onSlashReward, hasMajority, deadlinePassed }) {
+function DisputeCard({ e, address, processingId, cooldownIds, intentMap, onVote, onResolveDispute, hasMajority, deadlinePassed }) {
   const panelSize = e.arbitrators?.length ?? 1;
   const majority = Math.floor(panelSize / 2) + 1;
   const totalVotes = (e.votes_release ?? 0) + (e.votes_refund ?? 0);
@@ -480,7 +1022,56 @@ function DisputeCard({ e, address, processingId, onVote, onFinalize, onForceFina
   const canFinalize = hasMajority(e);
   const canForce = deadlinePassed(e);
   const busy = processingId === e.escrow_id;
+  const inCooldown = cooldownIds?.has(e.escrow_id) ?? false;
 
+  // ── Intent state — declared BEFORE softBlocked ────────────────────────────
+  const intent            = intentMap?.[e.escrow_id] ?? null;
+  const intentActive      = !!(intent && intent.expires_in_ms > 0);
+  const intentIsMe        = intentActive && intent.caller === address;
+  const intentIsArbiter   = intent?.is_arbiter ?? false;
+  const uniqueCallers     = intent?.unique_callers ?? 0;
+  const highlyContested   = uniqueCallers >= 3;
+  const inPriorityWindow  = intent?.in_priority_window ?? false;
+  const reliabilityScore  = intent?.reliability_score ?? 'UNKNOWN'; // PHASE 8
+  const lowReliability    = intent?.low_reliability ?? false; // PHASE 8
+
+  // Countdown timer for intent owner — ticks every second
+  const [countdown, setCountdown] = useState(
+    intentIsMe ? Math.ceil((intent?.expires_in_ms ?? 0) / 1000) : 0
+  );
+  useEffect(() => {
+    if (!intentIsMe) { setCountdown(0); return; }
+    setCountdown(Math.ceil((intent?.expires_in_ms ?? 0) / 1000));
+    const t = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
+    return () => clearInterval(t);
+  }, [intentIsMe, intent?.expires_in_ms]);
+
+  // Soft exclusion: if another user has active intent, disable by default.
+  // User can still proceed — it's advisory, not a hard lock.
+  const [intentOverride, setIntentOverride] = useState(false);
+  const softBlocked = intentActive && !intentIsMe && !intentOverride && !inCooldown;
+  const resolveDisabled = busy || inCooldown;
+
+  // Resolver reward estimate — strictly bounded by what the contract can pay
+  const MIN_FLOOR     = 500_000;
+  const GAS_THRESHOLD = 1_000_000;
+  const feePool = Number(e.dispute_fee_pool || 0);
+  const pct = Math.floor(feePool * 500 / 10_000);
+  const estimatedReward = feePool > 0 ? Math.min(feePool, Math.max(pct, MIN_FLOOR)) : 0;
+  const hasReward       = estimatedReward > 0;
+  const isLowPool       = feePool > 0 && feePool < MIN_FLOOR;
+  const estimatedProfit = estimatedReward - GAS_THRESHOLD;
+  const belowGas        = hasReward && estimatedReward < GAS_THRESHOLD;
+  // Competition level
+  const compLevel = estimatedReward > GAS_THRESHOLD * 2 ? 'HIGH'
+                  : estimatedReward > GAS_THRESHOLD      ? 'MEDIUM'
+                  : 'LOW';
+  const compMeta  = {
+    HIGH:   { label: 'High competition',     color: '#f87171', bg: 'rgba(239,68,68,0.1)'  },
+    MEDIUM: { label: 'Moderate competition', color: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
+    LOW:    { label: 'Low competition',      color: '#4ade80', bg: 'rgba(34,197,94,0.1)'  },
+  }[compLevel];
+  const fmtXlm = (s) => (Number(s) / 1e7).toFixed(4);
   return (
     <div style={{ background: '#1C1C1F', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '12px', padding: '1.5rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -540,6 +1131,86 @@ function DisputeCard({ e, address, processingId, onVote, onFinalize, onForceFina
         </div>
       </div>
 
+      {/* Intent advisory banner */}
+      {(canFinalize || canForce) && intentActive && !intentIsMe && (
+        <div style={{
+          background: highlyContested ? 'rgba(239,68,68,0.08)' : lowReliability ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
+          border: `1px solid ${highlyContested ? 'rgba(239,68,68,0.25)' : lowReliability ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`,
+          borderRadius: '8px', padding: '0.6rem 0.875rem', marginBottom: '0.75rem',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: lowReliability ? '0.3rem' : 0 }}>
+            <AlertTriangle size={13} color={highlyContested || lowReliability ? '#f87171' : '#f59e0b'} />
+            <span style={{ fontSize: '0.75rem', color: highlyContested || lowReliability ? '#f87171' : '#f59e0b', lineHeight: 1.5 }}>
+              {/* SECTION 4: Highly contested warning */}
+              {highlyContested
+                ? `⚠ Highly contested — ${uniqueCallers} unique participants have signalled intent`
+                : inPriorityWindow
+                  ? /* SECTION 2: Show arbiter status */ `${intentIsArbiter ? 'An arbiter' : 'A participant'} has priority for ~${Math.ceil((intent.priority_remaining_ms ?? 0) / 1000)}s — they signalled intent first`
+                  : `${intentIsArbiter ? 'An arbiter' : 'Another participant'} is currently attempting resolution (~${Math.ceil((intent.expires_in_ms ?? 0) / 1000)}s remaining)`}
+            </span>
+            {/* PHASE 8: Reliability badge */}
+            {reliabilityScore !== 'UNKNOWN' && (
+              <span style={{ 
+                fontSize: '0.65rem', 
+                fontWeight: 700,
+                padding: '0.1rem 0.4rem',
+                borderRadius: '999px',
+                background: reliabilityScore === 'HIGH' ? 'rgba(34,197,94,0.15)' : 
+                            reliabilityScore === 'MEDIUM' ? 'rgba(245,158,11,0.15)' :
+                            'rgba(239,68,68,0.15)',
+                color: reliabilityScore === 'HIGH' ? '#4ade80' : 
+                       reliabilityScore === 'MEDIUM' ? '#f59e0b' : '#f87171',
+              }}>
+                {reliabilityScore}
+              </span>
+            )}
+          </div>
+          {/* PHASE 8 — SECTION 6: Low reliability warning */}
+          {lowReliability && (
+            <div style={{ fontSize: '0.7rem', color: '#f87171', marginLeft: '1.3rem' }}>
+              ⚠ Low reliability resolver — high chance of failed execution
+            </div>
+          )}
+        </div>
+      )}
+      {(canFinalize || canForce) && intentIsMe && (
+        <div style={{
+          background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)',
+          borderRadius: '8px', padding: '0.6rem 0.875rem', marginBottom: '0.75rem',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <CheckCircle2 size={13} color="#4ade80" />
+            <span style={{ fontSize: '0.75rem', color: '#4ade80' }}>
+              You are currently resolving this dispute
+              {/* SECTION 5: Success chance hint */}
+              {intent?.success_chance && ` — Success chance: ${intent.success_chance}`}
+            </span>
+            {/* PHASE 8: Your reliability badge */}
+            {reliabilityScore !== 'UNKNOWN' && (
+              <span style={{ 
+                fontSize: '0.65rem', 
+                fontWeight: 700,
+                padding: '0.1rem 0.4rem',
+                borderRadius: '999px',
+                background: reliabilityScore === 'HIGH' ? 'rgba(34,197,94,0.15)' : 
+                            reliabilityScore === 'MEDIUM' ? 'rgba(245,158,11,0.15)' :
+                            'rgba(239,68,68,0.15)',
+                color: reliabilityScore === 'HIGH' ? '#4ade80' : 
+                       reliabilityScore === 'MEDIUM' ? '#f59e0b' : '#f87171',
+              }}>
+                {reliabilityScore}
+              </span>
+            )}
+          </div>
+          {countdown > 0 && (
+            <span style={{ fontSize: '0.72rem', color: '#4ade80', fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>
+              {countdown}s
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Actions */}
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
         {isMyEscrow && !canFinalize && !canForce && (
@@ -557,29 +1228,130 @@ function DisputeCard({ e, address, processingId, onVote, onFinalize, onForceFina
           </>
         )}
         {canFinalize && (
-          <button className="action-btn" disabled={busy}
-            style={{ background: 'rgba(168,85,247,0.1)', borderColor: 'rgba(168,85,247,0.3)', color: '#a855f7', fontWeight: 600 }}
-            onClick={() => onFinalize(e)}>
-            {busy ? '...' : '⚡ Finalize Dispute'}
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flex: 1 }}>
+            {/* Competition level badge */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.1rem' }}>
+              <span style={{ fontSize: '0.65rem', fontWeight: 700, color: compMeta.color, background: compMeta.bg, borderRadius: '999px', padding: '0.1rem 0.5rem' }}>
+                {compMeta.label}
+              </span>
+              {compLevel === 'HIGH' && (
+                <span style={{ fontSize: '0.65rem', color: '#f87171' }}>
+                  You may not receive the reward even if you execute
+                </span>
+              )}
+            </div>
+            {softBlocked ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                <button className="action-btn" disabled style={{ opacity: 0.4, cursor: 'not-allowed', background: 'rgba(168,85,247,0.1)', borderColor: 'rgba(168,85,247,0.3)', color: '#a855f7', fontWeight: 600 }}>
+                  ⚡ Resolve Dispute
+                </button>
+                <span style={{ fontSize: '0.68rem', color: '#f59e0b' }}>
+                  {inPriorityWindow
+                    ? `${intentIsArbiter ? 'An arbiter' : 'Another participant'} has priority (~${Math.ceil((intent?.priority_remaining_ms ?? 0) / 1000)}s).`
+                    : 'Another participant is attempting this.'}{' '}
+                  <button onClick={() => setIntentOverride(true)} style={{ background: 'none', border: 'none', color: '#C9A857', cursor: 'pointer', fontSize: '0.68rem', textDecoration: 'underline', padding: 0 }}>
+                    Proceed anyway (high competition risk)
+                  </button>
+                </span>
+              </div>
+            ) : (
+              <button className="action-btn" disabled={resolveDisabled}
+                style={{ background: 'rgba(168,85,247,0.1)', borderColor: 'rgba(168,85,247,0.3)', color: '#a855f7', fontWeight: 600, opacity: inCooldown ? 0.5 : 1 }}
+                onClick={() => onResolveDispute(e)}
+                title="First successful caller receives the reward">
+                {busy ? '...' : inCooldown ? '⏳ Cooling down...' : estimatedProfit < 0 ? '⚡ Resolve (Likely Loss)' : `⚡ Resolve (${compMeta.label})`}
+              </button>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', paddingLeft: '0.25rem' }}>
+              <span style={{ fontSize: '0.67rem', color: '#71717a' }}>⚠ Reward is not guaranteed</span>
+              <span style={{ fontSize: '0.67rem', color: '#71717a' }}>⚠ First successful caller receives reward</span>
+              {hasReward ? (
+                <>
+                  <span style={{ fontSize: '0.67rem', color: '#52525b' }}>
+                    {isLowPool
+                      ? `Est. reward: ${fmtXlm(estimatedReward)} XLM — low pool, may not cover gas`
+                      : `Est. reward: ${fmtXlm(estimatedReward)} XLM (not guaranteed)`}
+                  </span>
+                  <span style={{ fontSize: '0.67rem', color: estimatedProfit < 0 ? '#f87171' : '#52525b' }}>
+                    Est. profit after fees (approximate): {fmtXlm(estimatedProfit)} XLM
+                    {estimatedProfit < 0 && <span style={{ color: '#f87171', fontWeight: 700, marginLeft: '0.3rem' }}>Negative return</span>}
+                  </span>
+                </>
+              ) : (
+                <span style={{ fontSize: '0.67rem', color: '#52525b' }}>No resolver reward available (empty pool)</span>
+              )}
+            </div>
+          </div>
         )}
         {canForce && !canFinalize && (
-          <button className="action-btn" disabled={busy}
-            style={{ background: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.3)', color: '#f87171', fontWeight: 600 }}
-            onClick={() => onForceFinalize(e)}>
-            {busy ? '...' : '⏱ Force Finalize (Deadline Passed)'}
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flex: 1 }}>
+            {/* Competition level badge */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.1rem' }}>
+              <span style={{ fontSize: '0.65rem', fontWeight: 700, color: compMeta.color, background: compMeta.bg, borderRadius: '999px', padding: '0.1rem 0.5rem' }}>
+                {compMeta.label}
+              </span>
+              {compLevel === 'HIGH' && (
+                <span style={{ fontSize: '0.65rem', color: '#f87171' }}>
+                  You may not receive the reward even if you execute
+                </span>
+              )}
+            </div>
+            {softBlocked ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                <button className="action-btn" disabled style={{ opacity: 0.4, cursor: 'not-allowed', background: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.3)', color: '#f87171', fontWeight: 600 }}>
+                  ⏱ Resolve Dispute (Deadline Passed)
+                </button>
+                <span style={{ fontSize: '0.68rem', color: '#f59e0b' }}>
+                  {inPriorityWindow
+                    ? `${intentIsArbiter ? 'An arbiter' : 'Another participant'} has priority (~${Math.ceil((intent?.priority_remaining_ms ?? 0) / 1000)}s).`
+                    : 'Another participant is attempting this.'}{' '}
+                  <button onClick={() => setIntentOverride(true)} style={{ background: 'none', border: 'none', color: '#C9A857', cursor: 'pointer', fontSize: '0.68rem', textDecoration: 'underline', padding: 0 }}>
+                    Proceed anyway (high competition risk)
+                  </button>
+                </span>
+              </div>
+            ) : (
+              <button className="action-btn" disabled={resolveDisabled}
+                style={{ background: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.3)', color: '#f87171', fontWeight: 600, opacity: inCooldown ? 0.5 : 1 }}
+                onClick={() => onResolveDispute(e)}
+                title="First successful caller receives the reward">
+                {busy ? '...' : inCooldown ? '⏳ Cooling down...' : estimatedProfit < 0 ? '⏱ Resolve (Likely Loss)' : `⏱ Resolve (${compMeta.label})`}
+              </button>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', paddingLeft: '0.25rem' }}>
+              <span style={{ fontSize: '0.67rem', color: '#71717a' }}>⚠ Reward is not guaranteed</span>
+              <span style={{ fontSize: '0.67rem', color: '#71717a' }}>⚠ First successful caller receives reward</span>
+              {hasReward ? (
+                <>
+                  <span style={{ fontSize: '0.67rem', color: '#52525b' }}>
+                    {isLowPool
+                      ? `Est. reward: ${fmtXlm(estimatedReward)} XLM — low pool, may not cover gas`
+                      : `Est. reward: ${fmtXlm(estimatedReward)} XLM (not guaranteed)`}
+                  </span>
+                  <span style={{ fontSize: '0.67rem', color: estimatedProfit < 0 ? '#f87171' : '#52525b' }}>
+                    Est. profit after fees (approximate): {fmtXlm(estimatedProfit)} XLM
+                    {estimatedProfit < 0 && <span style={{ color: '#f87171', fontWeight: 700, marginLeft: '0.3rem' }}>Negative return</span>}
+                  </span>
+                </>
+              ) : (
+                <span style={{ fontSize: '0.67rem', color: '#52525b' }}>No resolver reward available (empty pool)</span>
+              )}
+            </div>
+          </div>
+        )}
+        {/* Already finalized guard — shown when escrow left Disputed state externally */}
+        {!canFinalize && !canForce && e.status !== 'Disputed' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <button className="action-btn" disabled style={{ opacity: 0.4, cursor: 'not-allowed' }}>
+              ⚡ Resolve Dispute
+            </button>
+            <span style={{ fontSize: '0.75rem', color: '#71717a', fontStyle: 'italic' }}>
+              This dispute has already been finalized.
+            </span>
+          </div>
         )}
         {!isMyEscrow && !canFinalize && !canForce && (
           <span style={{ fontSize: '0.78rem', color: '#71717a', fontStyle: 'italic' }}>You are not on this arbitration panel</span>
-        )}
-        {/* Slash + reward — permissionless, available after resolution */}
-        {(e.status === 'Released' || e.status === 'Refunded') && (
-          <button className="action-btn" disabled={busy}
-            style={{ background: 'rgba(201,168,87,0.08)', borderColor: 'rgba(201,168,87,0.3)', color: '#C9A857', fontWeight: 600 }}
-            onClick={() => onSlashReward(e)}>
-            {busy ? '...' : '⚡ Slash + Distribute Rewards'}
-          </button>
         )}
       </div>
     </div>

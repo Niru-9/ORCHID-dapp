@@ -7,8 +7,7 @@ import {
   contractMarkDelivered, 
   contractConfirmDelivery,
   contractVote,
-  contractFinalize,
-  contractForceFinalize,
+  contractResolveDispute,
   contractGetVotes,
   contractGetRole,
   contractDispute,
@@ -127,8 +126,8 @@ export default function Escrow() {
   const handleFinalize = async (escrowId) => {
     setProcessingId(escrowId);
     try {
-      await contractFinalize(address, escrowId);
-      toast.txSuccess('Dispute finalized!', '');
+      await contractResolveDispute(address, escrowId);
+      toast.txSuccess('Dispute resolved!', '');
       const updated = await getEscrowsForUser(address);
       setOnChainEscrows(updated || []);
     } catch (err) {
@@ -140,15 +139,15 @@ export default function Escrow() {
 
   const handleForceFinalize = async (escrowId) => {
     setConfirmModal({
-      title: 'Force Finalize',
-      message: 'Arbitration deadline has passed. This will refund the buyer. This action is irreversible.',
-      confirmLabel: 'Force Finalize',
+      title: 'Force Resolve',
+      message: 'Arbitration deadline has passed. This will execute the dispute resolution. This action is irreversible.',
+      confirmLabel: 'Force Resolve',
       danger: true,
       onConfirm: async () => {
         setProcessingId(escrowId);
         try {
-          await contractForceFinalize(address, escrowId);
-          toast.txSuccess('Force finalized - buyer refunded', '');
+          await contractResolveDispute(address, escrowId);
+          toast.txSuccess('Dispute resolved!', '');
           const updated = await getEscrowsForUser(address);
           setOnChainEscrows(updated || []);
         } catch (err) {

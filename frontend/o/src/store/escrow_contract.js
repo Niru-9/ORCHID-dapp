@@ -31,6 +31,7 @@ import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit/sdk';
 const RPC_URL      = import.meta.env.VITE_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
 const CONTRACT_ID  = import.meta.env.VITE_ESCROW_CONTRACT_ID;
 const NETWORK_PASS = Networks.TESTNET;
+const BACKEND_URL  = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
 const BASE_FEE     = '300000';
 // Native XLM token on testnet
 const NATIVE_TOKEN  = import.meta.env.VITE_NATIVE_TOKEN  || 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
@@ -51,15 +52,6 @@ function u64Val(n)        { return xdr.ScVal.scvU64(xdr.Uint64.fromString(String
 function i128Val(xlm) {
   const stroops = BigInt(Math.round(parseFloat(xlm) * 1e7));
   return nativeToScVal(stroops, { type: 'i128' });
-}
-function optionNone() {
-  // Soroban Option::None = scvVoid
-  return xdr.ScVal.scvVoid();
-}
-function optionSome(val) {
-  // Soroban Option::Some(Address) = the address ScVal directly
-  // (Soroban SDK unwraps Option automatically when the type is Option<T>)
-  return val;
 }
 
 async function invokeContract(callerAddress, method, args) {
@@ -240,42 +232,6 @@ export async function contractRegisterArbiterWithStake(arbiterAddress, stakeXlm)
 }
 
 /**
- * finalize — finalize dispute after majority is reached.
- */
-export async function contractFinalize(callerAddress, escrowId) {
-  return invokeContract(callerAddress, 'finalize', [
-    u64Val(escrowId),
-  ]);
-}
-
-/**
- * force_finalize — force finalize if arbitration deadline passed.
- */
-export async function contractForceFinalize(callerAddress, escrowId) {
-  return invokeContract(callerAddress, 'force_finalize', [
-    u64Val(escrowId),
-  ]);
-}
-
-/**
- * arbitrate — arbitrator resolves dispute.
- * decision: 'Release' (pay seller) or 'Refund' (pay buyer)
- * DEPRECATED: Use vote() + finalize() instead
- */
-export async function contractArbitrate(arbitratorAddress, escrowId, decision) {
-  // ArbitratorDecision is a Soroban enum — encode as scvVec with symbol tag
-  const decisionVal = xdr.ScVal.scvVec([
-    xdr.ScVal.scvSymbol(decision === 'Release' ? 'Release' : 'Refund'),
-  ]);
-
-  return invokeContract(arbitratorAddress, 'arbitrate', [
-    u64Val(escrowId),
-    addressVal(arbitratorAddress),
-    decisionVal,
-  ]);
-}
-
-/**
  * auto_release — anyone calls after deadline.
  */
 export async function contractAutoRelease(callerAddress, escrowId) {
@@ -339,19 +295,23 @@ export async function contractGetEligibleArbiterCount() {
   return readOnly('get_eligible_arbiter_count', []);
 }
 
-/** Slash inactive arbiters after dispute_deadline. Permissionless. */
-export async function contractSlashInactive(callerAddress, escrowId) {
-  return invokeContract(callerAddress, 'slash_inactive', [u64Val(escrowId)]);
+/** Atomic dispute resolution — executes slash + reward + fund transfer in one call.
+ *  Caller receives a reward (min 0.05 XLM floor, or 5% of pool, whichever is larger)
+ *  for executing this resolution. Reward comes only from the fee/slash pool.
+ */
+export async function contractResolveDispute(callerAddress, escrowId) {
+  return invokeContract(callerAddress, 'resolve_dispute', [
+    addressVal(callerAddress),
+    u64Val(escrowId),
+  ]);
 }
 
-/** Slash minority voters after finalize. Permissionless. */
-export async function contractSlashMinority(callerAddress, escrowId) {
-  return invokeContract(callerAddress, 'slash_minority', [u64Val(escrowId)]);
-}
-
-/** Distribute dispute fee pool to majority voters. Permissionless. */
-export async function contractDistributeRewards(callerAddress, escrowId) {
-  return invokeContract(callerAddress, 'distribute_rewards', [u64Val(escrowId)]);
+/** Get resolution summary for a resolved dispute.
+ *  Returns: { outcome, resolver, resolver_reward, total_pool, total_slashed, resolved_at }
+ *  Returns null if not yet resolved.
+ */
+export async function contractGetResolutionSummary(escrowId) {
+  return readOnly('get_resolution_summary', [u64Val(escrowId)]);
 }
 
 /** Request unstake — starts 7-day cooldown. */
@@ -490,4 +450,83 @@ export async function contractSetFee(adminAddress, newFeeBps) {
   return invokeContract(adminAddress, 'set_fee', [
     xdr.ScVal.scvU32(parseInt(newFeeBps)),
   ]);
+}
+
+// ── Resolution Intent (Advisory Coordination) ─────────────────────────────────
+// Off-chain ephemeral signal. Does NOT restrict resolve_dispute.
+// TTL: 30 seconds. Purely informational — reduces multi-user race collisions.
+
+/**
+ * Signal intent to resolve a dispute.
+ * PHASE 10: Includes stake amount for priority weighting
+ * PHASE 10 HARDENING: Includes escrow_arbitrators for real arbiter check
+ * Returns { blocked: false, ... } on success, null on network failure.
+ */
+export async function signalResolutionIntent(callerAddress, escrowId, isArbiter = false, rewardStroops = 0, callerBalance = 0, stakeAmount = 0, escrowArbitrators = []) {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/intent/${escrowId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        caller: callerAddress, 
+        is_arbiter: isArbiter,
+        reward_stroops: rewardStroops,
+        caller_balance: callerBalance,
+        stake_amount: stakeAmount,
+        escrow_arbitrators: escrowArbitrators, // PHASE 10 HARDENING
+      }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.status === 409) return { blocked: true, ...data };
+    if (res.status === 403) return { blocked: true, insufficient_balance: true, ...data };
+    if (res.status === 429) return { blocked: true, rate_limited: true, ...data };
+    if (!res.ok) return null;
+    return { blocked: false, ...data };
+  } catch { return null; }
+}
+
+/**
+ * Read current resolution intent for a dispute.
+ * Returns { intent, unique_callers, highly_contested, expires_in_ms, in_priority_window, 
+ *           priority_remaining_ms, success_chance }
+ * Returns null on network failure — caller must treat null as "no intent known".
+ */
+export async function getResolutionIntent(escrowId) {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/intent/${escrowId}`);
+    if (!res.ok) return null;
+    return res.json();
+  } catch { return null; }
+}
+
+/**
+ * Track successful resolution execution (Phase 8: Full behavioral tracking)
+ * @param {boolean} success - Whether the resolution was successful (true) or failed (false)
+ */
+export async function trackResolutionExecution(callerAddress, escrowId, success = true) {
+  try {
+    await fetch(`${BACKEND_URL}/api/intent/${escrowId}/executed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caller: callerAddress, success }),
+    });
+  } catch { /* silent — non-critical */ }
+}
+
+/**
+ * Get full user statistics (Phase 8)
+ */
+export async function getUserStats(address) {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/user-stats/${address}`);
+    if (!res.ok) return null;
+    return res.json();
+  } catch { return null; }
+}
+
+/**
+ * Get reliability score for a resolver (Legacy - redirects to getUserStats)
+ */
+export async function getReliabilityScore(address) {
+  return getUserStats(address);
 }

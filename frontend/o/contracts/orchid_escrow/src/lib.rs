@@ -152,6 +152,16 @@ const SELECTION_COOLDOWN_DISPUTES: u64 = 3;
 /// After 5 minority votes, slash doubles. Capped at 50% per event.
 const MINORITY_SCALE_FACTOR: i128 = 5;
 
+/// Resolver incentive: 5% of the dispute fee/slash pool paid to whoever calls resolve_dispute.
+/// Covers gas cost and provides economic incentive for permissionless execution.
+/// Comes ONLY from the fee/slash pool — no inflation, no escrow principal touched.
+const RESOLVER_REWARD_BPS: i128 = 500; // 5%
+
+/// Minimum resolver reward floor: 0.05 XLM (500_000 stroops).
+/// Ensures even tiny disputes are worth executing regardless of pool size.
+/// If pool < floor, resolver takes the entire pool (capped — never exceeds pool).
+const MIN_RESOLVER_REWARD: i128 = 500_000; // 0.05 XLM
+
 /// Maximum minority slash per event: 50% of stake.
 const MAX_MINORITY_SLASH_BPS: i128 = 5_000;
 
@@ -200,9 +210,11 @@ pub enum DataKey {
     ArbiterLastSelected(Address), // escrow_id of last dispute this arbiter was assigned
     ArbiterWins(Address),         // count of disputes where arbiter voted with majority
     ArbiterPairCount(Address, Address), // count of times two arbiters appeared in same panel
-    SlashInactiveDone(u64),       // idempotency guard for slash_inactive
-    SlashMinorityDone(u64),       // idempotency guard for slash_minority
-    RewardsDone(u64),             // idempotency guard for distribute_rewards
+    SlashInactiveDone(u64),       // idempotency guard for slash_inactive (legacy)
+    SlashMinorityDone(u64),       // idempotency guard for slash_minority (legacy)
+    RewardsDone(u64),             // idempotency guard for distribute_rewards (legacy)
+    EscrowResolved(u64),          // atomic resolution guard — set true after resolve_dispute
+    ResolutionSummary(u64),       // ResolutionRecord stored after resolve_dispute completes
 }
 
 // ─── State Machine ────────────────────────────────────────────────────────────
@@ -249,6 +261,20 @@ pub struct EscrowRecord {
     pub dispute_deadline:     u64,
     /// True if Mode B (arbitration-enabled). Panel assigned at dispute time.
     pub use_arbitration:      bool,
+}
+
+// ─── Resolution Summary ───────────────────────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone)]
+pub struct ResolutionRecord {
+    pub escrow_id:       u64,
+    pub outcome:         Symbol,    // "release" or "refund"
+    pub resolver:        Address,
+    pub resolver_reward: i128,
+    pub total_pool:      i128,      // pool before resolver cut
+    pub total_slashed:   i128,
+    pub resolved_at:     u64,       // ledger timestamp
 }
 
 // ─── Events ───────────────────────────────────────────────────────────────────
@@ -594,7 +620,7 @@ impl OrchidEscrow {
         // escrow_id, and pool state — all unknown at escrow creation time.
         if r.arbitrators.len() == 0 && r.use_arbitration {
             let panel_size = Self::panel_size_for(r.amount);
-            let panel = Self::select_panel(env, &r.buyer, &r.seller, panel_size);
+            let panel = Self::select_panel(&env, &r.buyer, &r.seller, panel_size);
 
             // Stake ratio cap enforced at dispute time
             let mut total_stake: i128 = 0;
@@ -739,286 +765,299 @@ impl OrchidEscrow {
     }
 
     // ── Finalize ──────────────────────────────────────────────────────────────
-    /// Finalize the dispute after majority is reached.
-    pub fn finalize(env: Env, escrow_id: u64) {
-        let mut r = Self::load(&env, escrow_id);
-
-        assert!(r.status == EscrowStatus::Disputed, "must be in Disputed state");
-        Self::assert_not_terminal(&r.status); // Prevent double finalization
-
-        let panel_size = r.arbitrators.len();
-        let majority = (panel_size / 2) + 1;
-
-        assert!(
-            r.votes_release >= majority || r.votes_refund >= majority,
-            "majority not reached yet"
-        );
-
-        if r.votes_release >= majority {
-            r.status = EscrowStatus::Released;
-            env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
-            Self::pay_seller(&env, &r);
-            emit(&env, "arbitrated_release", escrow_id);
-        } else {
-            r.status = EscrowStatus::Refunded;
-            env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
-            token::Client::new(&env, &r.token)
-                .transfer(&env.current_contract_address(), &r.buyer, &r.amount);
-            emit(&env, "arbitrated_refund", escrow_id);
-            emit_amount(&env, "funds_sent", escrow_id, r.amount);
-        }
+    /// DEPRECATED — use resolve_dispute() instead.
+    /// Kept as a stub to prevent breaking existing integrations.
+    /// Will panic if called directly — all callers must migrate to resolve_dispute.
+    pub fn finalize(_env: Env, _escrow_id: u64) {
+        panic!("finalize() is deprecated — call resolve_dispute() for atomic execution");
     }
 
     // ── Force Finalize ────────────────────────────────────────────────────────
-    /// Force finalize if arbitration deadline passed (deadlock protection).
-    pub fn force_finalize(env: Env, escrow_id: u64) {
-        let mut r = Self::load(&env, escrow_id);
-
-        assert!(r.status == EscrowStatus::Disputed, "not disputed");
-        assert!(
-            env.ledger().timestamp() >= r.dispute_deadline,
-            "dispute still active"
-        );
-
-        // Fallback rule: refund buyer
-        r.status = EscrowStatus::Refunded;
-        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
-
-        token::Client::new(&env, &r.token)
-            .transfer(&env.current_contract_address(), &r.buyer, &r.amount);
-        
-        emit(&env, "force_finalized", escrow_id);
-        emit_amount(&env, "funds_sent", escrow_id, r.amount);
+    /// DEPRECATED — use resolve_dispute() instead.
+    pub fn force_finalize(_env: Env, _escrow_id: u64) {
+        panic!("force_finalize() is deprecated — call resolve_dispute() for atomic execution");
     }
 
     // ── Slash Inactive ────────────────────────────────────────────────────────
-    /// Slash arbitrators who did not vote before dispute_deadline.
-    /// Callable by anyone after dispute_deadline passes.
-    /// Slashes INACTIVITY_SLASH_BPS (10%) of stake per inactive arbiter.
-    /// Slashed amount goes to DisputeFeePool for reward distribution.
-    /// Arbiters whose stake drops below MIN_ARBITER_STAKE are removed from pool.
-    pub fn slash_inactive(env: Env, escrow_id: u64) {
-        let r = Self::load(&env, escrow_id);
-        assert!(
-            r.status == EscrowStatus::Disputed || Self::is_terminal(&r.status),
-            "escrow must be disputed or resolved"
-        );
-        assert!(
-            env.ledger().timestamp() >= r.dispute_deadline,
-            "dispute deadline not reached yet"
-        );
-        // Idempotency guard — prevents double-slashing
-        assert!(
-            !env.storage().persistent().has(&DataKey::SlashInactiveDone(escrow_id)),
-            "slash_inactive already executed for this escrow"
-        );
-        env.storage().persistent().set(&DataKey::SlashInactiveDone(escrow_id), &true);
-
-        let mut slash_total: i128 = 0;
-
-        for arb in r.arbitrators.iter() {
-            let vote_key = DataKey::Vote(escrow_id, arb.clone());
-            if env.storage().persistent().has(&vote_key) { continue; } // voted — skip
-
-            let stake: i128 = env.storage().persistent()
-                .get(&DataKey::ArbiterLockedStake(arb.clone())).unwrap_or(0);
-            if stake == 0 { continue; }
-
-            let slash = stake.checked_mul(INACTIVITY_SLASH_BPS).expect("overflow")
-                             .checked_div(BPS).expect("div zero");
-            let new_stake = stake.checked_sub(slash).expect("underflow");
-
-            env.storage().persistent().set(&DataKey::ArbiterLockedStake(arb.clone()), &new_stake);
-            env.storage().persistent().set(&DataKey::ArbiterStake(arb.clone()), &new_stake);
-            slash_total = slash_total.checked_add(slash).expect("overflow");
-
-            // Track missed vote
-            let missed: u32 = env.storage().persistent()
-                .get(&DataKey::ArbiterMissedVotes(arb.clone())).unwrap_or(0);
-            env.storage().persistent()
-                .set(&DataKey::ArbiterMissedVotes(arb.clone()), &missed.saturating_add(1));
-
-            // Remove from pool if stake drops below minimum
-            if new_stake < MIN_ARBITER_STAKE {
-                Self::remove_from_pool(&env, &arb);
-            }
-
-            env.events().publish(
-                (Symbol::new(&env, "slash_inactive"), arb),
-                (slash, new_stake),
-            );
-        }
-
-        // Add slash proceeds to dispute fee pool
-        if slash_total > 0 {
-            let pool: i128 = env.storage().persistent()
-                .get(&DataKey::DisputeFeePool(escrow_id)).unwrap_or(0);
-            env.storage().persistent()
-                .set(&DataKey::DisputeFeePool(escrow_id), &(pool + slash_total));
-        }
+    /// DEPRECATED — internal logic moved into resolve_dispute().
+    /// Direct calls will panic. Use resolve_dispute() instead.
+    pub fn slash_inactive(_env: Env, _escrow_id: u64) {
+        panic!("slash_inactive() is deprecated — use resolve_dispute() for atomic execution");
     }
 
     // ── Slash Minority ────────────────────────────────────────────────────────
-    /// Slash arbitrators who voted with the losing minority.
-    /// Callable by anyone after finalize() has resolved the dispute.
-    /// Slashes MINORITY_SLASH_BPS (20%) of stake per minority voter.
-    ///
-    /// IMPORTANT LIMITATION — MINORITY ≠ DISHONEST:
-    /// This slash is probabilistic, not truth-based. An arbiter who voted
-    /// with the minority may have been correct and the majority wrong.
-    /// The slash exists to create economic pressure toward consensus, not
-    /// to punish honest disagreement. It is a coordination mechanism, not
-    /// a justice mechanism. Users must accept that arbitration outcomes are
-    /// probabilistic — the majority is more likely correct, not guaranteed correct.
-    /// A colluding majority can slash honest minority arbiters. This is a known
-    /// limitation. Phase 2 mitigation: reputation-weighted selection reduces
-    /// the probability of a colluding majority being assembled.
-    pub fn slash_minority(env: Env, escrow_id: u64) {
-        let r = Self::load(&env, escrow_id);
-        assert!(
-            r.status == EscrowStatus::Released || r.status == EscrowStatus::Refunded,
-            "must be resolved via arbitration first"
-        );
-        // Idempotency guard — prevents double-slashing
-        assert!(
-            !env.storage().persistent().has(&DataKey::SlashMinorityDone(escrow_id)),
-            "slash_minority already executed for this escrow"
-        );
-        // Order enforcement: slash must run before rewards are distributed
-        // to ensure slash proceeds are included in the reward pool.
-        assert!(
-            !env.storage().persistent().has(&DataKey::RewardsDone(escrow_id)),
-            "rewards already distributed — slash_minority must be called before distribute_rewards"
-        );
-        env.storage().persistent().set(&DataKey::SlashMinorityDone(escrow_id), &true);
-
-        // Determine which decision was the minority
-        let panel_size = r.arbitrators.len();
-        let majority = (panel_size / 2) + 1;
-        let minority_decision = if r.votes_release >= majority {
-            ArbitratorDecision::Refund   // release won → refund voters are minority
-        } else if r.votes_refund >= majority {
-            ArbitratorDecision::Release  // refund won → release voters are minority
-        } else {
-            return; // no majority reached (force_finalize case) — no minority slash
-        };
-
-        let mut slash_total: i128 = 0;
-
-        for arb in r.arbitrators.iter() {
-            let vote_key = DataKey::Vote(escrow_id, arb.clone());
-            let voted: Option<ArbitratorDecision> = env.storage().persistent().get(&vote_key);
-            if voted.as_ref() != Some(&minority_decision) { continue; }
-
-            let stake: i128 = env.storage().persistent()
-                .get(&DataKey::ArbiterLockedStake(arb.clone())).unwrap_or(0);
-            if stake == 0 { continue; }
-
-            // Scaled slash: base × (1 + minority_count / MINORITY_SCALE_FACTOR)
-            // Capped at MAX_MINORITY_SLASH_BPS (50%) per event.
-            let minority_count: u32 = env.storage().persistent()
-                .get(&DataKey::ArbiterMinorityVotes(arb.clone())).unwrap_or(0);
-            let scale_numerator = BPS + (minority_count as i128 * BPS / MINORITY_SCALE_FACTOR);
-            let effective_slash_bps = (MINORITY_SLASH_BPS * scale_numerator / BPS)
-                .min(MAX_MINORITY_SLASH_BPS);
-
-            let slash = stake.checked_mul(effective_slash_bps).expect("overflow")
-                             .checked_div(BPS).expect("div zero");
-            let new_stake = stake.checked_sub(slash).expect("underflow");
-
-            env.storage().persistent().set(&DataKey::ArbiterLockedStake(arb.clone()), &new_stake);
-            env.storage().persistent().set(&DataKey::ArbiterStake(arb.clone()), &new_stake);
-            slash_total = slash_total.checked_add(slash).expect("overflow");
-
-            // Track minority vote count for scaling future slashes
-            env.storage().persistent()
-                .set(&DataKey::ArbiterMinorityVotes(arb.clone()), &minority_count.saturating_add(1));
-
-            if new_stake < MIN_ARBITER_STAKE {
-                Self::remove_from_pool(&env, &arb);
-            }
-
-            env.events().publish(
-                (Symbol::new(&env, "slash_minority"), arb),
-                (slash, new_stake),
-            );
-        }
-
-        if slash_total > 0 {
-            let pool: i128 = env.storage().persistent()
-                .get(&DataKey::DisputeFeePool(escrow_id)).unwrap_or(0);
-            env.storage().persistent()
-                .set(&DataKey::DisputeFeePool(escrow_id), &(pool + slash_total));
-        }
+    /// DEPRECATED — internal logic moved into resolve_dispute().
+    /// Direct calls will panic. Use resolve_dispute() instead.
+    pub fn slash_minority(_env: Env, _escrow_id: u64) {
+        panic!("slash_minority() is deprecated — use resolve_dispute() for atomic execution");
     }
 
     // ── Distribute Rewards ────────────────────────────────────────────────────
-    /// Split DisputeFeePool equally among majority voters.
-    /// Callable by anyone after finalize() resolves the dispute.
-    pub fn distribute_rewards(env: Env, escrow_id: u64) {
-        let r = Self::load(&env, escrow_id);
-        assert!(
-            r.status == EscrowStatus::Released || r.status == EscrowStatus::Refunded,
-            "must be resolved via arbitration first"
-        );
-        // Idempotency guard — prevents double-distribution
-        assert!(
-            !env.storage().persistent().has(&DataKey::RewardsDone(escrow_id)),
-            "rewards already distributed for this escrow"
-        );
-        env.storage().persistent().set(&DataKey::RewardsDone(escrow_id), &true);
+    /// DEPRECATED — internal logic moved into resolve_dispute().
+    /// Direct calls will panic. Use resolve_dispute() instead.
+    pub fn distribute_rewards(_env: Env, _escrow_id: u64) {
+        panic!("distribute_rewards() is deprecated — use resolve_dispute() for atomic execution");
+    }
 
-        let pool: i128 = env.storage().persistent()
-            .get(&DataKey::DisputeFeePool(escrow_id)).unwrap_or(0);
-        if pool == 0 { return; }
+    // ── Resolve Dispute (ATOMIC) ──────────────────────────────────────────────
+    /// Single atomic function that executes ALL resolution steps in strict order:
+    ///   1. Verify majority reached OR deadline passed (force-finalize path)
+    ///   2. Transfer escrow funds (release to seller OR refund to buyer)
+    ///   3. Apply inactivity slashing (non-voters)
+    ///   4. Apply minority slashing (losing voters, scaled by repeat count)
+    ///   5. Pay resolver reward (5% of pool) to caller — incentivizes permissionless execution
+    ///   6. Distribute remaining reward pool to majority voters
+    ///   7. Mark EscrowResolved = true (idempotency guard)
+    ///
+    /// Permissionless — anyone can call. Safe to call multiple times (idempotent).
+    /// Caller receives RESOLVER_REWARD_BPS (5%) of the fee/slash pool as incentive.
+    /// Reward comes ONLY from the pool — no inflation, escrow principal is never touched.
+    ///
+    /// CONCURRENCY: Soroban is single-threaded per ledger. Two simultaneous calls
+    /// in the same ledger will serialize. The EscrowResolved guard ensures the
+    /// second call fails cleanly with no state mutation.
+    pub fn resolve_dispute(env: Env, caller: Address, escrow_id: u64) {
+        // ── IDEMPOTENCY GUARD ─────────────────────────────────────────────────
+        // Must be the FIRST check — prevents any double execution.
+        assert!(
+            !env.storage().persistent().has(&DataKey::EscrowResolved(escrow_id)),
+            "dispute already resolved atomically"
+        );
+
+        let mut r = Self::load(&env, escrow_id);
+        assert!(r.status == EscrowStatus::Disputed, "escrow is not in Disputed state");
 
         let panel_size = r.arbitrators.len();
         let majority = (panel_size / 2) + 1;
+        let now = env.ledger().timestamp();
 
-        let winning_decision = if r.votes_release >= majority {
-            ArbitratorDecision::Release
-        } else if r.votes_refund >= majority {
-            ArbitratorDecision::Refund
+        // Determine resolution path
+        let majority_release = r.votes_release >= majority;
+        let majority_refund  = r.votes_refund  >= majority;
+        let deadline_passed  = now >= r.dispute_deadline;
+
+        assert!(
+            majority_release || majority_refund || deadline_passed,
+            "majority not reached and deadline not passed — cannot resolve yet"
+        );
+
+        // ── STEP 1: TRANSFER ESCROW FUNDS ────────────────────────────────────
+        // Do this FIRST — funds leave the contract before any accounting.
+        // Prevents any reentrancy path from seeing funds still present.
+        let token_client = token::Client::new(&env, &r.token);
+
+        if majority_release {
+            r.status = EscrowStatus::Released;
+            env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+            Self::pay_seller(&env, &r);
+            env.events().publish((Symbol::new(&env, "dispute_resolved"), escrow_id), "release");
         } else {
-            return; // force_finalize — no majority, no reward distribution
+            // majority_refund OR deadline_passed (force path)
+            r.status = EscrowStatus::Refunded;
+            env.storage().persistent().set(&DataKey::Escrow(escrow_id), &r);
+            token_client.transfer(&env.current_contract_address(), &r.buyer, &r.amount);
+            env.events().publish((Symbol::new(&env, "dispute_resolved"), escrow_id), "refund");
+        }
+
+        // ── STEP 2: INACTIVITY SLASHING ──────────────────────────────────────
+        // Only applicable if deadline passed (arbiters had their window).
+        let mut slash_total: i128 = 0;
+        if deadline_passed {
+            for arb in r.arbitrators.iter() {
+                let vote_key = DataKey::Vote(escrow_id, arb.clone());
+                if env.storage().persistent().has(&vote_key) { continue; }
+
+                let stake: i128 = env.storage().persistent()
+                    .get(&DataKey::ArbiterLockedStake(arb.clone())).unwrap_or(0);
+                if stake == 0 { continue; }
+
+                let slash = stake.checked_mul(INACTIVITY_SLASH_BPS).expect("overflow")
+                                 .checked_div(BPS).expect("div zero");
+                let new_stake = stake.checked_sub(slash).expect("underflow");
+                env.storage().persistent().set(&DataKey::ArbiterLockedStake(arb.clone()), &new_stake);
+                env.storage().persistent().set(&DataKey::ArbiterStake(arb.clone()), &new_stake);
+                slash_total = slash_total.checked_add(slash).expect("overflow");
+
+                let missed: u32 = env.storage().persistent()
+                    .get(&DataKey::ArbiterMissedVotes(arb.clone())).unwrap_or(0);
+                env.storage().persistent()
+                    .set(&DataKey::ArbiterMissedVotes(arb.clone()), &missed.saturating_add(1));
+
+                if new_stake < MIN_ARBITER_STAKE { Self::remove_from_pool(&env, &arb); }
+
+                env.events().publish(
+                    (Symbol::new(&env, "slashing_applied"), escrow_id),
+                    (arb, "inactive", slash),
+                );
+            }
+        }
+
+        // ── STEP 3: MINORITY SLASHING ─────────────────────────────────────────
+        // Only applicable when a clear majority exists (not force-finalize path).
+        if majority_release || majority_refund {
+            let minority_decision = if majority_release {
+                ArbitratorDecision::Refund
+            } else {
+                ArbitratorDecision::Release
+            };
+
+            for arb in r.arbitrators.iter() {
+                let vote_key = DataKey::Vote(escrow_id, arb.clone());
+                let voted: Option<ArbitratorDecision> = env.storage().persistent().get(&vote_key);
+                if voted.as_ref() != Some(&minority_decision) { continue; }
+
+                let stake: i128 = env.storage().persistent()
+                    .get(&DataKey::ArbiterLockedStake(arb.clone())).unwrap_or(0);
+                if stake == 0 { continue; }
+
+                let minority_count: u32 = env.storage().persistent()
+                    .get(&DataKey::ArbiterMinorityVotes(arb.clone())).unwrap_or(0);
+                let scale = BPS + (minority_count as i128 * BPS / MINORITY_SCALE_FACTOR);
+                let effective_bps = (MINORITY_SLASH_BPS * scale / BPS).min(MAX_MINORITY_SLASH_BPS);
+                let slash = stake.checked_mul(effective_bps).expect("overflow")
+                                 .checked_div(BPS).expect("div zero");
+                let new_stake = stake.checked_sub(slash).expect("underflow");
+
+                env.storage().persistent().set(&DataKey::ArbiterLockedStake(arb.clone()), &new_stake);
+                env.storage().persistent().set(&DataKey::ArbiterStake(arb.clone()), &new_stake);
+                slash_total = slash_total.checked_add(slash).expect("overflow");
+
+                env.storage().persistent().set(
+                    &DataKey::ArbiterMinorityVotes(arb.clone()),
+                    &minority_count.saturating_add(1),
+                );
+
+                if new_stake < MIN_ARBITER_STAKE { Self::remove_from_pool(&env, &arb); }
+
+                env.events().publish(
+                    (Symbol::new(&env, "slashing_applied"), escrow_id),
+                    (arb, "minority", slash),
+                );
+            }
+        }
+
+        // ── STEP 4: DISTRIBUTE REWARDS ────────────────────────────────────────
+        // Order:
+        //   a) Add slash proceeds to pool
+        //   b) Pay resolver reward (floor-guarded, capped at pool) to caller
+        //   c) Split remaining pool among majority voters
+        // All transfers come from the fee/slash pool only — no inflation.
+        if slash_total > 0 {
+            let existing: i128 = env.storage().persistent()
+                .get(&DataKey::DisputeFeePool(escrow_id)).unwrap_or(0);
+            env.storage().persistent()
+                .set(&DataKey::DisputeFeePool(escrow_id), &(existing + slash_total));
+        }
+
+        let pool: i128 = env.storage().persistent()
+            .get(&DataKey::DisputeFeePool(escrow_id)).unwrap_or(0);
+
+        // ── STEP 4a: RESOLVER REWARD ─────────────────────────────────────────
+        // percent-based reward with a minimum floor so tiny disputes stay executable.
+        // Hard cap: resolver_reward <= pool (never pulls from escrow principal).
+        let resolver_reward = if pool > 0 {
+            let pct = pool
+                .checked_mul(RESOLVER_REWARD_BPS).expect("overflow")
+                .checked_div(BPS).expect("div zero");
+            // floor: at least MIN_RESOLVER_REWARD, but never more than the pool
+            pct.max(MIN_RESOLVER_REWARD).min(pool)
+        } else {
+            0i128
         };
 
-        // Count majority voters
-        let mut majority_count: i128 = 0;
-        for arb in r.arbitrators.iter() {
-            let vote_key = DataKey::Vote(escrow_id, arb.clone());
-            let voted: Option<ArbitratorDecision> = env.storage().persistent().get(&vote_key);
-            if voted.as_ref() == Some(&winning_decision) { majority_count += 1; }
-        }
-        if majority_count == 0 { return; }
-
-        let reward_per = pool.checked_div(majority_count).expect("div zero");
-        if reward_per == 0 { return; }
-
-        let token_addr: Address = r.token.clone();
-        let client = token::Client::new(&env, &token_addr);
-
-        for arb in r.arbitrators.iter() {
-            let vote_key = DataKey::Vote(escrow_id, arb.clone());
-            let voted: Option<ArbitratorDecision> = env.storage().persistent().get(&vote_key);
-            if voted.as_ref() != Some(&winning_decision) { continue; }
-            client.transfer(&env.current_contract_address(), &arb, &reward_per);
-            // Track win for behavioral monitoring
-            let wins: u32 = env.storage().persistent()
-                .get(&DataKey::ArbiterWins(arb.clone())).unwrap_or(0);
-            env.storage().persistent()
-                .set(&DataKey::ArbiterWins(arb.clone()), &wins.saturating_add(1));
+        if resolver_reward > 0 {
+            token::Client::new(&env, &r.token)
+                .transfer(&env.current_contract_address(), &caller, &resolver_reward);
             env.events().publish(
-                (Symbol::new(&env, "reward_distributed"), arb),
-                reward_per,
+                (Symbol::new(&env, "resolver_paid"), escrow_id),
+                (caller.clone(), resolver_reward),
             );
         }
 
-        // Clear pool
+        let remaining_pool = pool.checked_sub(resolver_reward).expect("underflow");
+
+        // ── STEP 4b: ARBITER REWARDS ─────────────────────────────────────────
+        let mut total_arbiter_rewards: i128 = 0;
+        if remaining_pool > 0 && (majority_release || majority_refund) {
+            let winning_decision = if majority_release {
+                ArbitratorDecision::Release
+            } else {
+                ArbitratorDecision::Refund
+            };
+
+            let mut majority_count: i128 = 0;
+            for arb in r.arbitrators.iter() {
+                let vote_key = DataKey::Vote(escrow_id, arb.clone());
+                let voted: Option<ArbitratorDecision> = env.storage().persistent().get(&vote_key);
+                if voted.as_ref() == Some(&winning_decision) { majority_count += 1; }
+            }
+
+            if majority_count > 0 {
+                let reward_per = remaining_pool.checked_div(majority_count).expect("div zero");
+                if reward_per > 0 {
+                    let reward_client = token::Client::new(&env, &r.token);
+                    for arb in r.arbitrators.iter() {
+                        let vote_key = DataKey::Vote(escrow_id, arb.clone());
+                        let voted: Option<ArbitratorDecision> = env.storage().persistent().get(&vote_key);
+                        if voted.as_ref() != Some(&winning_decision) { continue; }
+                        reward_client.transfer(&env.current_contract_address(), &arb, &reward_per);
+                        total_arbiter_rewards = total_arbiter_rewards.checked_add(reward_per).expect("overflow");
+                        let wins: u32 = env.storage().persistent()
+                            .get(&DataKey::ArbiterWins(arb.clone())).unwrap_or(0);
+                        env.storage().persistent()
+                            .set(&DataKey::ArbiterWins(arb.clone()), &wins.saturating_add(1));
+                    }
+                    env.events().publish(
+                        (Symbol::new(&env, "rewards_distributed"), escrow_id),
+                        (total_arbiter_rewards, majority_count),
+                    );
+                }
+            }
+        }
         env.storage().persistent().set(&DataKey::DisputeFeePool(escrow_id), &0i128);
+
+        // ── STEP 5: MARK RESOLVED + STORE SUMMARY ────────────────────────────
+        // EscrowResolved set LAST — after all state mutations complete.
+        let outcome_sym = if majority_release {
+            Symbol::new(&env, "release")
+        } else {
+            Symbol::new(&env, "refund")
+        };
+
+        let summary = ResolutionRecord {
+            escrow_id,
+            outcome:         outcome_sym.clone(),
+            resolver:        caller.clone(),
+            resolver_reward,
+            total_pool:      pool,
+            total_slashed:   slash_total,
+            resolved_at:     now,
+        };
+        env.storage().persistent().set(&DataKey::ResolutionSummary(escrow_id), &summary);
+
+        env.storage().persistent().set(&DataKey::EscrowResolved(escrow_id), &true);
+        env.storage().persistent().set(&DataKey::SlashInactiveDone(escrow_id), &true);
+        env.storage().persistent().set(&DataKey::SlashMinorityDone(escrow_id), &true);
+        env.storage().persistent().set(&DataKey::RewardsDone(escrow_id), &true);
+
+        // Final summary event — single source of truth for off-chain indexers.
+        env.events().publish(
+            (Symbol::new(&env, "dispute_resolved"), escrow_id),
+            (outcome_sym, pool, resolver_reward, slash_total),
+        );
     }
 
-    // ── Unregister Arbiter ────────────────────────────────────────────────────
+    /// Check if a dispute has been atomically resolved.
+    pub fn is_resolved(env: Env, escrow_id: u64) -> bool {
+        env.storage().persistent().has(&DataKey::EscrowResolved(escrow_id))
+    }
+
+    /// Returns the full resolution summary for a resolved dispute.
+    /// Includes outcome, resolver address, reward paid, pool size, and total slashed.
+    /// Returns None if the dispute has not been resolved yet.
+    pub fn get_resolution_summary(env: Env, escrow_id: u64) -> Option<ResolutionRecord> {
+        env.storage().persistent().get(&DataKey::ResolutionSummary(escrow_id))
+    }
     /// Request unstake. Cooldown of UNSTAKE_COOLDOWN_SECS (7 days) enforced.
     /// After cooldown, call claim_unstake() to receive tokens.
     pub fn request_unstake(env: Env, arbiter: Address) {
@@ -1499,6 +1538,10 @@ impl OrchidEscrow {
             // Reputation gating: exclude arbiters below minimum threshold entirely
             if rep_score < MIN_REPUTATION_FOR_SELECTION { continue; }
 
+            // Cooldown check: was this arbiter selected recently?
+            let last_selected: u64 = env.storage().persistent()
+                .get(&DataKey::ArbiterLastSelected(arb.clone())).unwrap_or(0);
+
             // Reputation decay: reduce score for arbiters inactive for many escrows.
             // Prevents silent attackers from maintaining neutral score indefinitely.
             let decayed_rep = if last_selected > 0 && current_escrow_id > last_selected {
@@ -1526,9 +1569,6 @@ impl OrchidEscrow {
                 }
             }
 
-            // Cooldown check: was this arbiter selected recently?
-            let last_selected: u64 = env.storage().persistent()
-                .get(&DataKey::ArbiterLastSelected(arb.clone())).unwrap_or(0);
             let recently_selected = current_escrow_id > 0
                 && last_selected > 0
                 && current_escrow_id.saturating_sub(last_selected) < SELECTION_COOLDOWN_DISPUTES;
