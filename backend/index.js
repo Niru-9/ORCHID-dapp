@@ -5,15 +5,13 @@ const cors      = require('cors');
 const rateLimit = require('express-rate-limit');
 const db        = require('./db');
 const { processPendingDisbursements } = require('./disburse');
+const { verifyEscrowResolved } = require('./soroban');
 
 const app = express();
 
 // ── CORS — restrict to known origins ─────────────────────────────────────────
 const ALLOWED_ORIGINS = [
   'https://orchiddapp.vercel.app',
-  'https://orchid-dapp-topaz.vercel.app',
-  'https://orchid-dapp.vercel.app',
-  'https://orchid-sepia.vercel.app',
   'http://localhost:3000',
   'http://localhost:5173',
   process.env.FRONTEND_URL,
@@ -847,6 +845,7 @@ app.get('/api/intent/:escrow_id', async (req, res) => {
 });
 
 // PHASE 10 — SECTION 2: Track successful resolution execution with bond release
+// PHASE 11 — ON-CHAIN VERIFICATION: Verify escrow is resolved on-chain before updating Redis
 app.post('/api/intent/:escrow_id/executed', writeLimiter, async (req, res) => {
   const escrowId = parseInt(req.params.escrow_id, 10);
   if (!Number.isFinite(escrowId) || escrowId < 1)
@@ -857,6 +856,55 @@ app.post('/api/intent/:escrow_id/executed', writeLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Invalid caller' });
 
   const redis = makeRedis();
+  
+  // PHASE 11 — STEP 3: Verify on-chain resolution before updating Redis
+  // This ensures backend state matches blockchain state
+  console.log(JSON.stringify({
+    event: 'VERIFY_ONCHAIN_RESOLUTION',
+    escrow_id: escrowId,
+    caller,
+    timestamp: Date.now(),
+  }));
+  
+  const isResolvedOnChain = await verifyEscrowResolved(escrowId);
+  
+  if (!isResolvedOnChain) {
+    console.error(JSON.stringify({
+      event: 'ONCHAIN_VERIFICATION_FAILED',
+      escrow_id: escrowId,
+      caller,
+      reason: 'Escrow not resolved on-chain',
+      timestamp: Date.now(),
+    }));
+    
+    return res.status(400).json({
+      error: 'Escrow not resolved on-chain',
+      message: 'The escrow must be resolved on the blockchain before updating backend state',
+    });
+  }
+  
+  console.log(JSON.stringify({
+    event: 'ONCHAIN_VERIFICATION_SUCCESS',
+    escrow_id: escrowId,
+    caller,
+    timestamp: Date.now(),
+  }));
+  
+  // PHASE 11 — STEP 4: Check if already marked as resolved in Redis (duplicate protection)
+  const alreadyResolved = await redis.get(ESCROW_RESOLVED_KEY(escrowId)).catch(() => null);
+  if (alreadyResolved) {
+    console.log(JSON.stringify({
+      event: 'DUPLICATE_RESOLUTION_ATTEMPT',
+      escrow_id: escrowId,
+      caller,
+      timestamp: Date.now(),
+    }));
+    
+    return res.status(409).json({
+      error: 'Escrow already marked as resolved',
+      message: 'This escrow has already been processed',
+    });
+  }
   
   // Load user stats
   const userStatsRaw = await redis.get(USER_STATS_KEY(caller)).catch(() => null);
@@ -927,6 +975,7 @@ app.post('/api/intent/:escrow_id/executed', writeLimiter, async (req, res) => {
     success: true,
     reliability_score: getReliabilityScore(userStats),
     user_stats: userStats,
+    verified_onchain: true,
   });
 });
 

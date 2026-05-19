@@ -37,8 +37,8 @@ const wcModules = WC_PROJECT_ID
       metadata: {
         name: 'Orchid',
         description: 'Optimized Real-time Cross-border Hub for Intelligent Disbursements',
-        url: 'https://orchid-dapp.vercel.app',
-        icons: ['https://orchid-dapp.vercel.app/favicon.ico'],
+        url: 'https://orchiddapp.vercel.app',
+        icons: ['https://orchiddapp.vercel.app/favicon.ico'],
       },
       allowedChains: [
         isPublic ? WalletConnectTargetChain.PUBLIC : WalletConnectTargetChain.TESTNET,
