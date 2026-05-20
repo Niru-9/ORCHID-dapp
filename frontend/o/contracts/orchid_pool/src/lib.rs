@@ -1,22 +1,18 @@
-/**
- * Orchid Pool — Soroban Lending Contract (plain-English summary)
- *
- * What this contract does:
- *   - Lenders deposit XLM → earn interest (supply APY rises as more is borrowed)
- *   - Borrowers lock XLM as collateral → borrow up to 66% of its value
- *   - Interest accrues every second via a global rate index
- *   - Late repayments incur +1.5% penalty per 2 days overdue
- *   - Unhealthy positions (health factor < 1.0) can be liquidated by anyone for a bonus
- *   - Liquidations are partial (50% of debt per call) to avoid over-punishing borrowers
- *   - An insurance fund (20% of protocol fees) auto-deploys to cover bad debt
- *   - Oracle price feeds have staleness + sanity guards; 3 bad updates auto-pause the contract
- *   - Admin can pause/unpause; fund rescue requires 48h delay after pause
- *
- * Key numbers:
- *   LTV = 66%  |  Min health = 1.0  |  Liquidation bonus = 3–10%
- *   Base borrow rate = 5% APY  |  Max utilization = 90%
- *   Protocol fee = 20% of interest  |  Insurance cut = 20% of protocol fee
- */
+// Orchid Pool — Soroban Lending Contract (plain-English summary)
+//
+// What this contract does:
+//   - Lenders deposit XLM → earn interest (supply APY rises as more is borrowed)
+//   - Borrowers lock XLM as collateral → borrow up to 66% of its value
+//   - Interest accrues every second via a global rate index
+//   - Late repayments incur +1.5% penalty per 2 days overdue
+//   - Unhealthy positions (health factor < 1.0) can be liquidated by anyone for a bonus
+//   - Liquidations are partial (50% of debt per call)
+//   - An insurance fund (20% of protocol fees) auto-deploys to cover bad debt
+//   - Oracle price feeds have staleness + sanity guards; 3 bad updates auto-pause
+//   - Admin can pause/unpause; fund rescue requires 48h delay after pause
+//
+// Key numbers:
+//   LTV = 66%  |  Min health = 1.0  |  Base borrow rate = 5% APY  |  Max utilization = 90%
 //! Orchid Pool — Soroban Lending Protocol v3 (Adversarially Hardened)
 //!
 //! ─── COMPONENTS ──────────────────────────────────────────────────────────────

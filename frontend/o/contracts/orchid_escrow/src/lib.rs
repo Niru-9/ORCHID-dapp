@@ -1,35 +1,27 @@
-/**
- * Orchid Escrow — Soroban Escrow Contract (plain-English summary)
- *
- * What this contract does:
- *   - Buyer locks XLM into the contract (funds held on-chain, not in any wallet)
- *   - Seller marks delivery → buyer confirms → funds released to seller
- *   - If buyer disappears after delivery, auto-release fires after the delivery window
- *   - If seller never delivers, buyer reclaims funds after the deadline
- *   - Buyer can cancel before the deadline for a full refund
- *
- * Two modes:
- *   Mode A (trust-minimized): no arbitration, deterministic timeouts only. Max 500 XLM.
- *   Mode B (arbitration):     a panel of 3/5/7 staked arbiters is auto-assigned at dispute time.
- *                             Panel size scales with escrow amount. Users cannot pick arbiters.
- *
- * Arbitration flow (Mode B):
- *   1. Either party raises a dispute → panel assigned from staked arbiter pool
- *   2. Each arbiter votes Release (pay seller) or Refund (pay buyer)
- *   3. Majority wins → anyone calls resolve_dispute to execute atomically
- *   4. Minority voters get their stake slashed; inactive voters get 10% slashed
- *   5. Resolver earns 5% of the slash/fee pool as a reward
- *
- * Arbiter staking:
- *   - Min stake: 500 XLM  |  Pool cap: 75 arbiters  |  Max concentration: 25%
- *   - Unstake requires 7-day cooldown
- *   - Reputation score = total_votes − (missed×3) − (minority×2)
- *
- * Security:
- *   - Panel assigned at dispute time (not creation) → blocks precomputation attacks
- *   - Dispute spike detection: auto-pause if >50 disputes/hour
- *   - Hard cap: 100,000 XLM per escrow
- */
+// Orchid Escrow — Soroban Escrow Contract (plain-English summary)
+//
+// What this contract does:
+//   - Buyer locks XLM into the contract (funds held on-chain, not in any wallet)
+//   - Seller marks delivery → buyer confirms → funds released to seller
+//   - If buyer disappears after delivery, auto-release fires after the delivery window
+//   - If seller never delivers, buyer reclaims funds after the deadline
+//   - Buyer can cancel before the deadline for a full refund
+//
+// Two modes:
+//   Mode A (trust-minimized): no arbitration, deterministic timeouts only. Max 500 XLM.
+//   Mode B (arbitration):     a panel of 3/5/7 staked arbiters is auto-assigned at dispute time.
+//
+// Arbitration flow (Mode B):
+//   1. Either party raises a dispute → panel assigned from staked arbiter pool
+//   2. Each arbiter votes Release (pay seller) or Refund (pay buyer)
+//   3. Majority wins → anyone calls resolve_dispute to execute atomically
+//   4. Minority voters get their stake slashed; inactive voters get 10% slashed
+//   5. Resolver earns 5% of the slash/fee pool as a reward
+//
+// Security:
+//   - Panel assigned at dispute time (not creation) → blocks precomputation attacks
+//   - Dispute spike detection: auto-pause if >50 disputes/hour
+//   - Hard cap: 100,000 XLM per escrow
 //! Orchid Escrow — Soroban Contract v10 (Phase 2 Adversarial Hardening)
 //!
 //! ─── PHASE 2 CHANGES FROM v9 ─────────────────────────────────────────────────
