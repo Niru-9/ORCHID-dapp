@@ -101,6 +101,8 @@ button {
   flex-direction: column;
   padding: 1.5rem;
   z-index: 20;
+  overflow-y: auto;
+  height: 100vh;
 }
 
 .sidebar-header {
@@ -149,6 +151,21 @@ button {
 .nav-menu::-webkit-scrollbar-thumb {
   background: var(--glass-border);
   border-radius: 4px;
+}
+
+/* Sidebar scrollbar — thin and subtle */
+.sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+.sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar::-webkit-scrollbar-thumb {
+  background: var(--glass-border);
+  border-radius: 4px;
+}
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.15);
 }
 
 .nav-item {

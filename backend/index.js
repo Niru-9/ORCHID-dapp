@@ -1,3 +1,25 @@
+/**
+ * backend/index.js — Orchid API Server
+ *
+ * Express.js backend deployed on Render. Handles everything that can't live on-chain:
+ *   - Wallet registration (unique node counting via Redis)
+ *   - Transaction recording (volume, success/fail metrics)
+ *   - Dashboard metrics endpoint (/api/metrics)
+ *   - Resolution intent coordination (/api/intent/:escrow_id)
+ *     → Off-chain advisory layer that reduces race conditions in dispute resolution
+ *     → Does NOT restrict who can call resolve_dispute on-chain
+ *   - Health check endpoint (/health) — used by UptimeRobot
+ *   - Disbursement polling (legacy custody wallet payouts, every 60s)
+ *
+ * Security:
+ *   - CORS restricted to known Vercel origins + localhost
+ *   - Rate limiting: 200 req/15min general, 200 req/15min on write endpoints
+ *   - Input validation: Stellar address regex, tx hash regex
+ *   - Payload size limit: 10kb
+ *
+ * All persistent state lives in Upstash Redis (see db.js).
+ * All smart contract interactions are read-only (see soroban.js).
+ */
 if (process.env.NODE_ENV !== 'production') require('dotenv').config();
 
 const express   = require('express');

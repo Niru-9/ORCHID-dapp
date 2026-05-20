@@ -1,3 +1,11 @@
+/**
+ * Landing — the public-facing home page shown before wallet connection.
+ * Contains: hero section, live network stats bar, problem/solution copy,
+ * principles, how-it-works steps, and footer.
+ *
+ * Stats (nodes, settlement time, accuracy, volume) are fetched live from
+ * Horizon and the backend — no hardcoded values.
+ */
 import { useEffect } from 'react';
 import { useWalletStore } from '../store/wallet';
 import { useNetworkStats } from '../store/networkStats';

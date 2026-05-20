@@ -15,7 +15,7 @@ function StatusBadge({ status }) {
     healthy:  { color: '#10b981', bg: 'rgba(16,185,129,0.1)',  icon: <CheckCircle2 size={14}/>, label: 'Healthy' },
     degraded: { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)',  icon: <AlertTriangle size={14}/>, label: 'Degraded' },
     error:    { color: '#ef4444', bg: 'rgba(239,68,68,0.1)',   icon: <XCircle size={14}/>, label: 'Error' },
-    checking: { color: '#6b7280', bg: 'rgba(107,114,128,0.1)', icon: <RefreshCw size={14} style={{animation:'spin 1s linear infinite'}}/>, label: 'Checking...' },
+    checking: { color: '#6b7280', bg: 'rgba(107,114,128,0.1)', icon: <Activity size={14}/>, label: 'Measuring' },
   }[status] || { color: '#6b7280', bg: 'rgba(107,114,128,0.1)', icon: <AlertTriangle size={14}/>, label: 'Unknown' };
 
   return (

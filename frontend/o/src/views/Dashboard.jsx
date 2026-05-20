@@ -1,6 +1,9 @@
+/**
+ * Dashboard.jsx — Main app home screen after wallet connection.
+ * Shows: XLM balance, quick send form, 3 primary action cards (Send/Lock/Earn),
+ * recent transactions, credit score preview, and earn yield teaser.
+ */
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useWalletStore } from '../store/wallet';
 import { useAnalytics } from '../store/analytics';
 import { useLendingStore } from '../store/lending';
 import { motion } from 'framer-motion';

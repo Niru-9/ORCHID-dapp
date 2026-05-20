@@ -1,3 +1,21 @@
+/**
+ * Escrow.jsx — Escrow Contracts View
+ *
+ * This page lets buyers and sellers create and manage on-chain escrow contracts.
+ *
+ * What you can do here:
+ *   - Create a new escrow (lock XLM in the Soroban contract)
+ *   - Choose Mode A (trust-minimized, no arbitration) or Mode B (arbiter panel)
+ *   - Mode B is required for amounts ≥ 500 XLM
+ *   - Seller marks delivery on-chain → buyer confirms → funds released
+ *   - Buyer can cancel before the deadline for a full refund
+ *   - Either party can raise a dispute (Mode B only) → arbiter panel votes
+ *   - Anyone can force-resolve after the dispute deadline passes
+ *   - Register as an arbiter by staking XLM (redirects to Arbitration page)
+ *
+ * On-chain escrows (from the contract) are shown alongside local transaction records.
+ * Both buyer and seller can see the same escrow — fetched by wallet address.
+ */
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useWalletStore } from '../store/wallet';

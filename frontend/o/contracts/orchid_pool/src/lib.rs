@@ -1,3 +1,22 @@
+/**
+ * Orchid Pool — Soroban Lending Contract (plain-English summary)
+ *
+ * What this contract does:
+ *   - Lenders deposit XLM → earn interest (supply APY rises as more is borrowed)
+ *   - Borrowers lock XLM as collateral → borrow up to 66% of its value
+ *   - Interest accrues every second via a global rate index
+ *   - Late repayments incur +1.5% penalty per 2 days overdue
+ *   - Unhealthy positions (health factor < 1.0) can be liquidated by anyone for a bonus
+ *   - Liquidations are partial (50% of debt per call) to avoid over-punishing borrowers
+ *   - An insurance fund (20% of protocol fees) auto-deploys to cover bad debt
+ *   - Oracle price feeds have staleness + sanity guards; 3 bad updates auto-pause the contract
+ *   - Admin can pause/unpause; fund rescue requires 48h delay after pause
+ *
+ * Key numbers:
+ *   LTV = 66%  |  Min health = 1.0  |  Liquidation bonus = 3–10%
+ *   Base borrow rate = 5% APY  |  Max utilization = 90%
+ *   Protocol fee = 20% of interest  |  Insurance cut = 20% of protocol fee
+ */
 //! Orchid Pool — Soroban Lending Protocol v3 (Adversarially Hardened)
 //!
 //! ─── COMPONENTS ──────────────────────────────────────────────────────────────
@@ -28,68 +47,88 @@ use soroban_sdk::{
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// Loan-to-value ratio: borrowers can borrow up to 66% of their collateral's value.
 /// 66% LTV — borrower needs 150% collateral to borrow 100%.
 const LTV_RATIO: i128 = 6_600;
 
+// If a borrower's health factor drops below 1.0 (10_000 BPS), they can be liquidated.
 /// Health factor floor in BPS. Below this → liquidatable.
 const MIN_HEALTH: i128 = 10_000; // 1.0
 
+// Liquidators receive a 5% bonus on top of the debt they cover — their profit incentive.
 /// Liquidation bonus for liquidators (5%).
 const LIQUIDATION_BONUS: i128 = 500;
 
+// The minimum annual interest rate borrowers pay, even when the pool is nearly empty.
 /// Base borrow APY in BPS (5%).
 const BASE_BORROW_RATE: i128 = 500;
 
+// How much the borrow rate rises as utilization increases — steeper slope = higher rates at full capacity.
 /// Additional rate slope at 100% utilization (+20%).
 const RATE_SLOPE: i128 = 2_000;
 
+// Used to convert per-second interest accrual into an annual rate.
 const SECONDS_PER_YEAR: i128 = 31_536_000;
 
+// 20% of all interest earned is kept by the protocol (split between admin and insurance fund).
 /// Protocol fee on interest (20%).
 const PROTOCOL_FEE_BPS: i128 = 2_000;
 
+// Basis points denominator — 10_000 BPS = 100%. Used for all percentage math.
 const BPS: i128 = 10_000;
 
+// Prices are stored as USD × 1_000_000 to avoid decimals. $1.00 = 1_000_000.
 /// Price scale: prices stored as USD * PRICE_SCALE.
 /// e.g. $1.00 = 1_000_000, $0.10 = 100_000
 const PRICE_SCALE: i128 = 1_000_000;
 
+// Admin must wait 48 hours after pausing before they can withdraw funds — prevents rug pulls.
 /// Admin rescue delay after pause (48 hours).
 const RESCUE_DELAY_SECS: u64 = 48 * 3_600;
 
+// Prices older than 5 minutes are considered stale and rejected — protects against outdated data.
 /// Maximum price age in seconds. Prices older than this are rejected.
 const MAX_PRICE_AGE_SECS: u64 = 5 * 60; // 5 minutes
 
+// A single price update cannot move more than 20% — blocks sudden oracle manipulation.
 /// Maximum price change per update in BPS. Rejects oracle manipulation attempts.
 const MAX_PRICE_CHANGE_BPS: i128 = 2_000; // 20% per update
 
+// New borrows are blocked once 90% of the pool is already lent out — keeps a liquidity buffer.
 /// Utilization cap — borrowing blocked above this level.
 const MAX_UTILIZATION_BPS: i128 = 9_000; // 90%
 
+// Each liquidation call only covers 50% of the debt — gentler and safer than full liquidation.
 /// Partial liquidation fraction — liquidate this fraction of debt per call.
 const LIQUIDATION_FRACTION_BPS: i128 = 5_000; // 50%
 
+// Liquidation bonus scales with risk: low-risk positions get 3%, high-risk get 10%.
 /// Dynamic liquidation bonus bounds.
 const LIQ_BONUS_MIN: i128 = 300;   // 3% — low risk
 const LIQ_BONUS_MID: i128 = 500;   // 5% — normal
 const LIQ_BONUS_HIGH: i128 = 1_000; // 10% — high utilization or near-zero HF
 
+// A loan must be at least 5 minutes old before it can be liquidated — blocks flash-loan attacks.
 /// Minimum time a loan must exist before it can be liquidated.
 /// Prevents flash-loan-style instant borrow + manipulate + liquidate attacks.
 const MIN_BORROW_AGE_SECS: u64 = 300; // 5 minutes
 
+// 20% of protocol fees are set aside in an insurance reserve to cover bad debt.
 /// Share of protocol interest fees routed to insurance fund.
 const INSURANCE_FEE_BPS: i128 = 2_000; // 20% of interest fees
 
+// After 3 consecutive suspicious price updates, the contract auto-pauses itself.
 /// How many consecutive oracle sanity-limit hits trigger auto-pause.
 /// A slow price manipulation attack hits this before doing real damage.
 const ORACLE_STRIKE_LIMIT: u32 = 3;
 
+// If bad debt exceeds 5% of the total pool, the contract auto-pauses for safety.
 /// Bad debt threshold as BPS of total_supplied. Auto-pauses if exceeded.
 const BAD_DEBT_PAUSE_BPS: i128 = 500; // 5% of pool
 
 // ─── Storage Keys ─────────────────────────────────────────────────────────────
 
+// All the named slots used to read/write data on the blockchain.
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -117,6 +156,7 @@ pub enum DataKey {
 
 // ─── Pool State ───────────────────────────────────────────────────────────────
 
+// Global snapshot of the pool: how much is deposited, borrowed, and how interest has grown over time.
 #[contracttype]
 #[derive(Clone, Default)]
 pub struct PoolState {
@@ -130,6 +170,7 @@ pub struct PoolState {
 
 // ─── Supply Position ──────────────────────────────────────────────────────────
 
+// Tracks how many pool shares a lender owns and when they deposited.
 #[contracttype]
 #[derive(Clone)]
 pub struct SupplyPosition {
@@ -140,6 +181,7 @@ pub struct SupplyPosition {
 
 // ─── Collateral Position ──────────────────────────────────────────────────────
 
+// Tracks how much collateral a borrower has locked in the contract.
 #[contracttype]
 #[derive(Clone)]
 pub struct CollateralPosition {
@@ -149,10 +191,12 @@ pub struct CollateralPosition {
 
 // ─── Loan ─────────────────────────────────────────────────────────────────────
 
+// Possible states a loan can be in during its lifecycle.
 #[contracttype]
 #[derive(Clone, PartialEq)]
 pub enum LoanStatus { Active, Repaid, Liquidated }
 
+// Full record of a single borrow: amount, rate, timestamps, repayment progress, and status.
 #[contracttype]
 #[derive(Clone)]
 pub struct Loan {
@@ -170,6 +214,7 @@ pub struct Loan {
 
 // ─── View Structs ─────────────────────────────────────────────────────────────
 
+// A rich summary of a borrower's position — collateral value, debt, health, and how much more they can borrow.
 #[contracttype]
 #[derive(Clone)]
 pub struct HealthInfo {
@@ -194,6 +239,7 @@ pub struct OrchidPool;
 impl OrchidPool {
 
     // ── Init ──────────────────────────────────────────────────────────────────
+    // One-time setup: registers the admin, the token this pool uses, and zeroes all counters.
     pub fn init(env: Env, admin: Address, token: Address) {
         admin.require_auth();
         if env.storage().instance().has(&DataKey::Admin) {
@@ -266,6 +312,8 @@ impl OrchidPool {
     }
 
     // ── Deposit (supply liquidity) ────────────────────────────────────────────
+    // Lender deposits tokens into the pool and receives LP shares proportional to their contribution.
+    // Shares represent their ownership stake — they grow in value as interest accrues.
     pub fn deposit(env: Env, lender: Address, amount: i128) {
         Self::assert_not_paused(&env);
         lender.require_auth();
@@ -301,6 +349,8 @@ impl OrchidPool {
     }
 
     // ── Withdraw (remove liquidity) ───────────────────────────────────────────
+    // Lender burns their LP shares and gets back their proportional share of the pool.
+    // Blocked if the pool doesn't have enough free liquidity (i.e., too much is borrowed out).
     pub fn withdraw(env: Env, lender: Address, amount: i128) {
         Self::assert_not_paused(&env);
         lender.require_auth();
@@ -343,6 +393,7 @@ impl OrchidPool {
     }
 
     // ── Deposit Collateral ────────────────────────────────────────────────────
+    // Borrower locks tokens as collateral. This is required before they can borrow anything.
     pub fn deposit_collateral(env: Env, borrower: Address, amount: i128) {
         Self::assert_not_paused(&env);
         borrower.require_auth();
@@ -364,6 +415,8 @@ impl OrchidPool {
     }
 
     // ── Withdraw Collateral ───────────────────────────────────────────────────
+    // Borrower retrieves some or all of their collateral.
+    // Blocked if removing it would push their health factor below the safe minimum.
     pub fn withdraw_collateral(env: Env, borrower: Address, amount: i128) {
         Self::assert_not_paused(&env);
         borrower.require_auth();
@@ -403,6 +456,9 @@ impl OrchidPool {
     }
 
     // ── Borrow ────────────────────────────────────────────────────────────────
+    // Borrower takes a loan from the pool for a set number of days (1–365).
+    // Requires sufficient collateral and checks the utilization circuit breaker.
+    // Returns the new loan ID.
     pub fn borrow(env: Env, borrower: Address, amount: i128, term_days: u64) -> u64 {
         Self::assert_not_paused(&env);
         borrower.require_auth();
@@ -480,6 +536,8 @@ impl OrchidPool {
     }
 
     // ── Repay ─────────────────────────────────────────────────────────────────
+    // Borrower repays some or all of a loan. Handles interest accrual and late penalties.
+    // Marks the loan as fully repaid when the total owed is covered.
     pub fn repay(env: Env, borrower: Address, loan_id: u64, amount: i128) {
         Self::assert_not_paused(&env);
         borrower.require_auth();
@@ -679,6 +737,7 @@ impl OrchidPool {
     }
 
     // ── Admin: Pause / Unpause ────────────────────────────────────────────────
+    // Pause halts all deposits, withdrawals, borrows, and repayments — emergency stop.
     pub fn pause(env: Env) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -687,6 +746,7 @@ impl OrchidPool {
         env.events().publish(("paused",), env.ledger().timestamp());
     }
 
+    // Unpause resumes normal contract operations after an emergency has been resolved.
     pub fn unpause(env: Env) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -695,6 +755,8 @@ impl OrchidPool {
     }
 
     // ── Admin: Rescue Funds ───────────────────────────────────────────────────
+    // Last-resort fund recovery: admin can withdraw tokens only after the contract has been
+    // paused for at least 48 hours. Prevents instant rug pulls.
     pub fn rescue_funds(env: Env, recipient: Address, amount: i128) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -722,25 +784,30 @@ impl OrchidPool {
 
     // ── Views ─────────────────────────────────────────────────────────────────
 
+    // Returns the full pool state: total supplied, borrowed, shares, and interest index.
     pub fn get_pool_state(env: Env) -> PoolState {
         env.storage().instance().get(&DataKey::PoolState).unwrap()
     }
 
+    // Returns the current annual yield lenders are earning, in basis points.
     pub fn get_supply_apy(env: Env) -> i128 {
         let p: PoolState = env.storage().instance().get(&DataKey::PoolState).unwrap();
         Self::supply_apy(p.total_borrowed, p.total_supplied)
     }
 
+    // Returns the current annual interest rate borrowers pay, in basis points.
     pub fn get_borrow_rate(env: Env) -> i128 {
         let p: PoolState = env.storage().instance().get(&DataKey::PoolState).unwrap();
         Self::borrow_rate(p.total_borrowed, p.total_supplied)
     }
 
+    // Returns a user's health factor in BPS. Below 10_000 (1.0) means they can be liquidated.
     pub fn get_health_factor(env: Env, user: Address) -> i128 {
         let p: PoolState = env.storage().instance().get(&DataKey::PoolState).unwrap();
         Self::health_factor(&env, &user, &p)
     }
 
+    // Returns the raw collateral token amount a user has locked in the contract.
     pub fn get_collateral(env: Env, user: Address) -> i128 {
         Self::col(&env, &user)
     }
@@ -751,6 +818,7 @@ impl OrchidPool {
             .unwrap_or(0)
     }
 
+    // Returns a full health summary: collateral value, debt, health factor, and max borrow room.
     pub fn get_health_info(env: Env, user: Address) -> HealthInfo {
         let pool: PoolState = env.storage().instance().get(&DataKey::PoolState).unwrap();
         let token = Self::tok(&env);
@@ -788,14 +856,17 @@ impl OrchidPool {
         }
     }
 
+    // Returns a specific loan by borrower address and loan ID, or None if not found.
     pub fn get_loan(env: Env, borrower: Address, loan_id: u64) -> Option<Loan> {
         env.storage().persistent().get(&DataKey::Loan(borrower, loan_id))
     }
 
+    // Returns a lender's supply position: how many LP shares they hold and when they deposited.
     pub fn get_supply_position(env: Env, lender: Address) -> Option<SupplyPosition> {
         env.storage().persistent().get(&DataKey::Supply(lender))
     }
 
+    // Returns the total protocol fees accumulated (admin's share of interest).
     pub fn get_protocol_fees(env: Env) -> i128 {
         env.storage().instance().get(&DataKey::ProtocolFees).unwrap_or(0)
     }
@@ -804,6 +875,7 @@ impl OrchidPool {
         env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
 
+    // Returns the total bad debt — loans that couldn't be fully covered by collateral.
     pub fn get_bad_debt(env: Env) -> i128 {
         env.storage().instance().get(&DataKey::BadDebt).unwrap_or(0)
     }
@@ -835,6 +907,7 @@ impl OrchidPool {
         env.storage().instance().get(&DataKey::OracleStrikeCount).unwrap_or(0)
     }
 
+    // Returns the current pool utilization in BPS (e.g., 7500 = 75% of deposits are lent out).
     pub fn get_utilization(env: Env) -> i128 {
         let p: PoolState = env.storage().instance().get(&DataKey::PoolState).unwrap();
         if p.total_supplied == 0 { return 0; }
@@ -846,13 +919,14 @@ impl OrchidPool {
     // INTERNAL HELPERS
     // ─────────────────────────────────────────────────────────────────────────
 
+    // Blocks any state-changing call while the contract is paused.
     fn assert_not_paused(env: &Env) {
         let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
         assert!(!paused, "contract is paused");
     }
 
-    /// Accrue global interest index. Must be called at the start of every
-    /// state-changing function to keep the accumulated_rate current.
+    // Updates the global interest index based on time elapsed since the last update.
+    // Must be called at the start of every state-changing function so interest is always current.
     fn accrue(env: &Env) -> PoolState {
         let mut pool: PoolState = env.storage().instance().get(&DataKey::PoolState).unwrap();
         let now = env.ledger().timestamp();
@@ -872,8 +946,8 @@ impl OrchidPool {
         pool
     }
 
-    /// Dynamic liquidation bonus based on utilization and health factor.
-    /// Higher risk = higher bonus = more incentive for liquidators to act.
+    // Calculates the dynamic liquidation bonus based on pool utilization and the borrower's health factor.
+    // Higher risk = higher bonus = more incentive for liquidators to act.
     fn liquidation_bonus(borrowed: i128, supplied: i128, hf: i128) -> i128 {
         let util = if supplied == 0 { 0 } else {
             borrowed.checked_mul(BPS).expect("of").checked_div(supplied).expect("dz")
@@ -886,6 +960,8 @@ impl OrchidPool {
         LIQ_BONUS_MIN
     }
 
+    // Calculates the current borrow rate using a linear utilization model:
+    // rate = BASE_BORROW_RATE + (utilization × RATE_SLOPE). Higher utilization = higher rates.
     fn borrow_rate(borrowed: i128, supplied: i128) -> i128 {
         if supplied == 0 { return BASE_BORROW_RATE; }
         let util = borrowed
@@ -914,7 +990,8 @@ impl OrchidPool {
           .checked_div(BPS).expect("div zero")
     }
 
-    /// Compute accrued interest for a loan using the global accumulated_rate.
+    // Computes how much interest a loan has accrued since it was opened.
+    // Uses the global accumulated_rate index — no per-second loop needed.
     fn accrued_interest(loan: &Loan, pool: &PoolState) -> i128 {
         let factor = pool.accumulated_rate
             .checked_sub(loan.rate_index_at).expect("underflow");
@@ -923,7 +1000,8 @@ impl OrchidPool {
             .checked_div(BPS).expect("div zero")
     }
 
-    /// Total debt in USD (scaled by PRICE_SCALE) for a user across all active loans.
+    // Sums all active loan debt for a user and converts it to USD using the oracle price.
+    // Returns 0 if no price is set (safe default — prevents false liquidations).
     fn debt_usd(env: &Env, user: &Address, pool: &PoolState) -> i128 {
         let token = Self::tok(env);
         let price: i128 = env.storage().instance()
@@ -1015,7 +1093,7 @@ impl OrchidPool {
 
     // ── UI Helpers ────────────────────────────────────────────────────────────
 
-    /// Get all loans for a user (for dashboard)
+    // Returns all loans (active + historical) for a user — used to populate the lending dashboard.
     pub fn get_user_loans(env: Env, user: Address) -> soroban_sdk::Vec<Loan> {
         let pool = Self::accrue(&env);
         let mut loans = soroban_sdk::Vec::new(&env);
@@ -1030,7 +1108,7 @@ impl OrchidPool {
         loans
     }
 
-    /// Dashboard aggregation: (total_supplied, total_borrowed, utilization_bps, insurance_fund)
+    // Returns a single aggregated tuple for the dashboard: total supplied, borrowed, utilization %, and insurance reserve.
     pub fn get_dashboard_data(env: Env) -> (i128, i128, i128, i128) {
         let pool = Self::accrue(&env);
         let utilization = if pool.total_supplied > 0 {
@@ -1042,12 +1120,12 @@ impl OrchidPool {
         (pool.total_supplied, pool.total_borrowed, utilization, insurance)
     }
 
-    /// Insurance fund balance
+    // Returns the current insurance fund balance — the reserve built from protocol fees to cover bad debt.
     pub fn get_insurance_status(env: Env) -> i128 {
         env.storage().instance().get(&DataKey::InsuranceFund).unwrap_or(0)
     }
 
-    /// Max additional borrow for a user in token units
+    // Returns the maximum additional tokens a user can borrow given their current collateral and existing debt.
     pub fn max_borrowable(env: Env, user: Address) -> i128 {
         let pool = Self::accrue(&env);
         let token = Self::tok(&env);
@@ -1067,7 +1145,7 @@ impl OrchidPool {
         } else { 0 }
     }
 
-    /// Expected accrued interest for a loan (UI preview)
+    // Returns how much interest has accrued on a loan so far — used by the UI to show a repayment preview.
     pub fn expected_interest(env: Env, loan_id: u64, borrower: Address) -> i128 {
         let pool = Self::accrue(&env);
         if let Some(loan) = env.storage().persistent()
@@ -1077,7 +1155,9 @@ impl OrchidPool {
         } else { 0 }
     }
 
-    /// Credit score proxy: repaid loans / total loans * 850
+    // Estimates a user's credit score based on their repayment history.
+    // Formula: 400 base + up to 450 bonus based on (repaid / total) ratio. Max 850.
+    // New users with no loans start at 650 (neutral).
     pub fn get_credit_score(env: Env, user: Address) -> u32 {
         let counter: u64 = env.storage().persistent()
             .get(&DataKey::LoanCounter(user.clone())).unwrap_or(0);

@@ -1,6 +1,10 @@
+/**
+ * Lending.jsx — Earn & Borrow view.
+ * Three tabs: Supply (deposit XLM to earn APY), Borrow (take a loan against collateral),
+ * Fixed Deposit (lock XLM for a term at guaranteed APY).
+ * All operations call the Soroban pool contract directly — no custody wallet.
+ */
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { useWalletStore } from '../store/wallet';
 import { useLendingStore, FD_APY, BORROW_BASE_APY, calcSupplyApy, CREDIT_GATE, calcRepayAmount, calcFdPayout } from '../store/lending';
 import { useToast } from '../components/Toast';
 

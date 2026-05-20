@@ -1,3 +1,30 @@
+/**
+ * wallet.js — Global Wallet & Transaction Store
+ *
+ * The single source of truth for everything wallet-related in the app.
+ * Built with Zustand + localStorage persistence.
+ *
+ * What lives here:
+ *   - Wallet connection / disconnection (Freighter, WalletConnect, xBull)
+ *   - XLM balance fetching from Horizon
+ *   - sendTransaction     → direct XLM transfer to any Stellar address
+ *   - routePayment        → split one payment across multiple recipients (%)
+ *   - batchPayment        → send fixed amounts to multiple recipients in one tx
+ *   - createEscrow        → lock funds in the Soroban escrow contract
+ *   - releaseEscrow       → buyer confirms delivery, releases funds to seller
+ *   - refundEscrow        → buyer cancels, gets refund
+ *   - disputeEscrow       → either party raises a dispute
+ *   - supplyLendingPool   → deposit XLM into the pool to earn APY
+ *   - withdrawSupply      → withdraw supplied XLM + interest
+ *   - depositCollateral   → lock XLM as collateral before borrowing
+ *   - borrowFunds         → borrow XLM against collateral
+ *   - repayLoan           → repay a loan (full or partial)
+ *   - createFixedDeposit  → lock XLM for a fixed term at guaranteed APY
+ *
+ * All Soroban contract calls go through escrow_contract.js / pool_contract.js.
+ * All Horizon payments go through the signAndSubmit helper.
+ * Analytics are recorded after every confirmed transaction.
+ */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
@@ -55,6 +82,8 @@ if (!StellarWalletsKit.isInitialized?.()) {
 }
 
 // ─── Helper: extract a human-readable message from a Horizon error ───────────
+// Horizon wraps the real failure reason inside extras.result_codes.
+// This unwraps it so the UI shows "op_no_destination" instead of a raw 400.
 function horizonError(err) {
   // Horizon 400 errors carry the real reason in extras.result_codes
   const codes = err?.response?.data?.extras?.result_codes;
@@ -74,6 +103,8 @@ function horizonError(err) {
 }
 
 // ─── Helper: sign + submit a built transaction ───────────────────────────────
+// Takes a fully built Stellar transaction, asks the wallet to sign it,
+// then submits it to Horizon. Returns the Horizon response on success.
 async function signAndSubmit(tx, signerAddress) {
   const xdr = tx.toXDR();
 
@@ -98,6 +129,10 @@ async function signAndSubmit(tx, signerAddress) {
 }
 
 // ─── Helper: sign + submit + record in analytics ─────────────────────────────
+// Wraps signAndSubmit with analytics tracking.
+// On success: records the tx hash and marks it confirmed.
+// On failure: marks the tx as failed in analytics.
+// Also syncs to the backend DB for cross-user metrics.
 async function signSubmitRecord(tx, { amount, sourceAccount, type }) {
   const { useAnalytics } = await import('./analytics.js');
   const analytics = useAnalytics.getState();
@@ -126,11 +161,15 @@ async function signSubmitRecord(tx, { amount, sourceAccount, type }) {
 }
 
 // ─── Helper: generate a short display ID ─────────────────────────────────────
+// Creates a human-readable local ID like "TX-M5X2K" for UI display.
+// Not the on-chain hash — just a local reference for the transaction list.
 function shortId() {
   return `TX-${Date.now().toString(36).toUpperCase()}`;
 }
 
 // ─── Helper: format amount safely for Stellar (max 7 decimal places) ─────────
+// Stellar requires amounts to have at most 7 decimal places (stroop precision).
+// Throws if the amount is invalid or zero.
 function stellarAmount(value) {
   const n = parseFloat(value);
   if (isNaN(n) || n <= 0) throw new Error('Invalid amount');
@@ -138,6 +177,8 @@ function stellarAmount(value) {
 }
 
 // ─── Helper: build tx with auto-retry on tx_bad_seq ──────────────────────────
+// tx_bad_seq happens when the account sequence number is stale (e.g. two tabs open).
+// This retries once by re-fetching the account before giving up.
 async function buildAndSign(address, buildFn, meta = {}) {
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -158,6 +199,8 @@ async function buildAndSign(address, buildFn, meta = {}) {
 }
 
 // ── BigInt-safe JSON serializer for Zustand persist ──────────────────────────
+// Soroban contract calls can return BigInt values. JSON.stringify doesn't handle
+// BigInt natively, so we convert them to strings before saving to localStorage.
 const bigIntSerializer = {
   serialize: (state) => JSON.stringify(state, (_key, val) =>
     typeof val === 'bigint' ? val.toString() : val
@@ -178,6 +221,11 @@ export const useWalletStore = create(
       savedRouteTemplates: [],
 
       // ── Wallet ─────────────────────────────────────────────────────────────
+      /**
+       * connect — opens the wallet selection modal (Freighter, WalletConnect, etc.)
+       * On success: saves the address, fetches balance, registers the wallet in
+       * analytics + backend DB, and indexes on-chain tx history from Horizon.
+       */
       connect: async () => {
         set({ isConnecting: true, error: null });
         try {
@@ -220,6 +268,10 @@ export const useWalletStore = create(
       },
 
       // ── Balance ────────────────────────────────────────────────────────────
+      /**
+       * fetchBalance — loads the current XLM balance and all token balances
+       * for the connected wallet from Horizon. Updates state with the result.
+       */
       fetchBalance: async () => {
         const { address } = get();
         if (!address) return;
@@ -257,6 +309,11 @@ export const useWalletStore = create(
       },
 
       // ── Send (Dashboard quick transfer) ────────────────────────────────────
+      /**
+       * sendTransaction — sends XLM directly to another Stellar address.
+       * Validates the destination exists on-chain before building the tx.
+       * Used for the quick transfer widget on the Dashboard.
+       */
       sendTransaction: async (destination, amount) => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
@@ -291,6 +348,11 @@ export const useWalletStore = create(
       },
 
       // ── Payment Router (split payment) ─────────────────────────────────────
+      /**
+       * routePayment — splits a total amount across multiple recipients in one tx.
+       * Each split specifies an address and a percentage of the total.
+       * All payments are bundled into a single Stellar transaction (atomic).
+       */
       routePayment: async (totalAmount, splits, asset = 'XLM') => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
@@ -323,6 +385,11 @@ export const useWalletStore = create(
       },
 
       // ── Bulk Payout ────────────────────────────────────────────────────────
+      /**
+       * batchPayment — sends different amounts to multiple recipients in one tx.
+       * Unlike routePayment (percentage splits), each recipient gets a fixed amount.
+       * Used for payroll, bulk disbursements, etc.
+       */
       batchPayment: async (recipients, asset = 'XLM') => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
@@ -371,8 +438,16 @@ export const useWalletStore = create(
       },
 
       // ── Escrow — Soroban Contract ──────────────────────────────────────────
-      // Funds go directly into the deployed Soroban escrow contract.
-      // No custody wallet — the contract enforces all rules trustlessly.
+      // All escrow operations go directly to the deployed Soroban contract.
+      // No custody wallet — the contract holds and enforces all rules trustlessly.
+
+      /**
+       * createEscrow — locks buyer's funds in the Soroban escrow contract.
+       * @param seller        - seller's Stellar address
+       * @param amount        - XLM amount to lock
+       * @param expiryDays    - days until the escrow auto-expires
+       * @param useArbitration- false = Mode A (no dispute), true = Mode B (arbiter panel)
+       */
       createEscrow: async (seller, amount, asset, description, expiryDays, useArbitration = false) => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');
@@ -526,9 +601,13 @@ export const useWalletStore = create(
       },
 
       // ── Lending — Soroban Pool Contract ───────────────────────────────────
-      // All funds go directly into the deployed Soroban pool contract.
-      // No custody wallet — the contract enforces all rules trustlessly.
+      // All lending operations go directly to the deployed Soroban pool contract.
+      // No custody wallet — the contract holds and enforces all rules trustlessly.
 
+      /**
+       * supplyLendingPool — deposit XLM into the pool to earn supply APY.
+       * Calls the pool contract's deposit function, then records locally.
+       */
       supplyLendingPool: async (amount, asset) => {
         const { address } = get();
         if (!address) throw new Error('Wallet not connected');

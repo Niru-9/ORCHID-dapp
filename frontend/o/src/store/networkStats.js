@@ -1,5 +1,12 @@
+/**
+ * networkStats.js — Network-wide Stats Store
+ *
+ * Tracks live Stellar network metrics: node count, settlement time, cumulative volume.
+ * Fetches unique wallet counts from Horizon transaction history (real cross-user data).
+ * Seeds initial liquidity from on-chain custody account balances on first load.
+ * Persists across sessions via localStorage.
+ */
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 
 const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 

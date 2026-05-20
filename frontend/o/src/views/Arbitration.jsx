@@ -1,3 +1,25 @@
+/**
+ * Arbitration.jsx — Arbitration Panel View
+ *
+ * This page is for registered arbiters and anyone who wants to resolve disputes.
+ *
+ * What you can do here:
+ *   - Register as an arbiter by staking XLM (min 500 XLM)
+ *   - See your stake, reputation score, and reliability stats
+ *   - View all disputed escrows and your personal dispute queue
+ *   - Vote Release (pay seller) or Refund (pay buyer) on disputes you're assigned to
+ *   - Call resolve_dispute to execute the majority outcome and earn a reward
+ *   - Request unstake (7-day cooldown) and claim your tokens back
+ *
+ * Resolution is competitive — anyone can call resolve_dispute and earn 5% of the
+ * slash/fee pool. The backend intent system (advisory only) helps reduce race collisions
+ * by showing who is "about to" resolve, but it does NOT block anyone on-chain.
+ *
+ * Priority scoring (for the intent system):
+ *   - Assigned arbiters get the highest priority
+ *   - Staked users rank above non-staked
+ *   - Reliability score (past success rate) affects priority
+ */
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useWalletStore } from '../store/wallet';
