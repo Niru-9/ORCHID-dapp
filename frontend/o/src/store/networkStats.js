@@ -7,8 +7,7 @@
  * Persists across sessions via localStorage.
  */
 import { create } from 'zustand';
-
-const HORIZON_URL = 'https://horizon-testnet.stellar.org';
+import { persist } from 'zustand/middleware';
 
 // Custody accounts — read from env vars (set in .env / Vercel dashboard)
 const LIQUIDITY_POOL_PUB = import.meta.env.VITE_POOL_ADDRESS;
