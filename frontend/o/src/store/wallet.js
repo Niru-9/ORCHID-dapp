@@ -74,11 +74,25 @@ const wcModules = WC_PROJECT_ID
   : [];
 
 // Guard against double-init (React StrictMode renders twice in dev)
-if (!StellarWalletsKit.isInitialized?.()) {
-  StellarWalletsKit.init({
-    network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
-    modules: [...defaultModules(), ...wcModules],
-  });
+// Wrapped in try/catch — ad blockers can block WalletConnect resources
+// and crash the module if unhandled.
+try {
+  if (!StellarWalletsKit.isInitialized?.()) {
+    StellarWalletsKit.init({
+      network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
+      modules: [...defaultModules(), ...wcModules],
+    });
+  }
+} catch (e) {
+  // WalletConnect blocked by ad blocker — init without it
+  try {
+    if (!StellarWalletsKit.isInitialized?.()) {
+      StellarWalletsKit.init({
+        network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
+        modules: [...defaultModules()],
+      });
+    }
+  } catch (_) { /* silent */ }
 }
 
 // ─── Helper: extract a human-readable message from a Horizon error ───────────
