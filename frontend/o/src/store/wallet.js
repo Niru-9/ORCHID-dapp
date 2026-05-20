@@ -58,16 +58,8 @@ const POOL_ADDRESS   = import.meta.env.VITE_POOL_ADDRESS;
 const isPublic = import.meta.env.VITE_STELLAR_NETWORK === 'PUBLIC';
 const WC_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
 
-const wcModules = [];
-
-// Build WalletConnect module safely — Brave Shields blocks pulse.walletconnect.com
-// which causes the WalletConnectModule constructor to throw at import time.
-// We catch that and fall back to Freighter/xBull only.
-// On mobile (no Brave Shields), WalletConnect loads normally.
-let _wcMods = [];
-try {
-  if (WC_PROJECT_ID) {
-    _wcMods = [new WalletConnectModule({
+const wcModules = WC_PROJECT_ID
+  ? [new WalletConnectModule({
       projectId: WC_PROJECT_ID,
       metadata: {
         name: 'Orchid',
@@ -78,29 +70,17 @@ try {
       allowedChains: [
         isPublic ? WalletConnectTargetChain.PUBLIC : WalletConnectTargetChain.TESTNET,
       ],
-    })];
-  }
-} catch (_) { _wcMods = []; }
+    })]
+  : [];
 
 // Guard against double-init (React StrictMode renders twice in dev)
-try {
-  if (!StellarWalletsKit.isInitialized?.()) {
-    StellarWalletsKit.init({
-      network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
-      modules: [...defaultModules(), ..._wcMods],
-    });
-  }
-} catch (_) {
-  // Fallback: init without WalletConnect if it crashed
-  try {
-    if (!StellarWalletsKit.isInitialized?.()) {
-      StellarWalletsKit.init({
-        network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
-        modules: [...defaultModules()],
-      });
-    }
-  } catch (_) { /* silent */ }
+if (!StellarWalletsKit.isInitialized?.()) {
+  StellarWalletsKit.init({
+    network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
+    modules: [...defaultModules(), ...wcModules],
+  });
 }
+
 // ─── Helper: extract a human-readable message from a Horizon error ───────────
 // Horizon wraps the real failure reason inside extras.result_codes.
 // This unwraps it so the UI shows "op_no_destination" instead of a raw 400.
