@@ -58,8 +58,10 @@ const POOL_ADDRESS   = import.meta.env.VITE_POOL_ADDRESS;
 const isPublic = import.meta.env.VITE_STELLAR_NETWORK === 'PUBLIC';
 const WC_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
 
-const wcModules = WC_PROJECT_ID
-  ? [new WalletConnectModule({
+let wcModules = [];
+try {
+  if (WC_PROJECT_ID) {
+    wcModules = [new WalletConnectModule({
       projectId: WC_PROJECT_ID,
       metadata: {
         name: 'Orchid',
@@ -70,16 +72,21 @@ const wcModules = WC_PROJECT_ID
       allowedChains: [
         isPublic ? WalletConnectTargetChain.PUBLIC : WalletConnectTargetChain.TESTNET,
       ],
-    })]
-  : [];
+    })];
+  }
+} catch (_) {
+  wcModules = [];
+}
 
 // Guard against double-init (React StrictMode renders twice in dev)
-if (!StellarWalletsKit.isInitialized?.()) {
-  StellarWalletsKit.init({
-    network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
-    modules: [...defaultModules(), ...wcModules],
-  });
-}
+try {
+  if (!StellarWalletsKit.isInitialized?.()) {
+    StellarWalletsKit.init({
+      network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
+      modules: [...defaultModules(), ...wcModules],
+    });
+  }
+} catch (_) { /* silent — prevents crash if already initialized */ }
 
 // ─── Helper: extract a human-readable message from a Horizon error ───────────
 // Horizon wraps the real failure reason inside extras.result_codes.
