@@ -4,6 +4,8 @@
  * recent transactions, credit score preview, and earn yield teaser.
  */
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useWalletStore } from '../store/wallet';
 import { useAnalytics } from '../store/analytics';
 import { useLendingStore } from '../store/lending';
 import { motion } from 'framer-motion';

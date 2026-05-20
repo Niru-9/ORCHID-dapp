@@ -5,6 +5,7 @@
  * All operations call the Soroban pool contract directly — no custody wallet.
  */
 import { useState, useEffect } from 'react';
+import { useWalletStore } from '../store/wallet';
 import { useLendingStore, FD_APY, BORROW_BASE_APY, calcSupplyApy, CREDIT_GATE, calcRepayAmount, calcFdPayout } from '../store/lending';
 import { useToast } from '../components/Toast';
 
