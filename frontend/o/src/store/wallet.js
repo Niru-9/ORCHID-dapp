@@ -1,5 +1,5 @@
 /**
- * wallet.js — Global Wallet & Transaction Store
+ * wallet.js ΓÇö Global Wallet & Transaction Store
  *
  * The single source of truth for everything wallet-related in the app.
  * Built with Zustand + localStorage persistence.
@@ -7,19 +7,19 @@
  * What lives here:
  *   - Wallet connection / disconnection (Freighter, WalletConnect, xBull)
  *   - XLM balance fetching from Horizon
- *   - sendTransaction     → direct XLM transfer to any Stellar address
- *   - routePayment        → split one payment across multiple recipients (%)
- *   - batchPayment        → send fixed amounts to multiple recipients in one tx
- *   - createEscrow        → lock funds in the Soroban escrow contract
- *   - releaseEscrow       → buyer confirms delivery, releases funds to seller
- *   - refundEscrow        → buyer cancels, gets refund
- *   - disputeEscrow       → either party raises a dispute
- *   - supplyLendingPool   → deposit XLM into the pool to earn APY
- *   - withdrawSupply      → withdraw supplied XLM + interest
- *   - depositCollateral   → lock XLM as collateral before borrowing
- *   - borrowFunds         → borrow XLM against collateral
- *   - repayLoan           → repay a loan (full or partial)
- *   - createFixedDeposit  → lock XLM for a fixed term at guaranteed APY
+ *   - sendTransaction     ΓåÆ direct XLM transfer to any Stellar address
+ *   - routePayment        ΓåÆ split one payment across multiple recipients (%)
+ *   - batchPayment        ΓåÆ send fixed amounts to multiple recipients in one tx
+ *   - createEscrow        ΓåÆ lock funds in the Soroban escrow contract
+ *   - releaseEscrow       ΓåÆ buyer confirms delivery, releases funds to seller
+ *   - refundEscrow        ΓåÆ buyer cancels, gets refund
+ *   - disputeEscrow       ΓåÆ either party raises a dispute
+ *   - supplyLendingPool   ΓåÆ deposit XLM into the pool to earn APY
+ *   - withdrawSupply      ΓåÆ withdraw supplied XLM + interest
+ *   - depositCollateral   ΓåÆ lock XLM as collateral before borrowing
+ *   - borrowFunds         ΓåÆ borrow XLM against collateral
+ *   - repayLoan           ΓåÆ repay a loan (full or partial)
+ *   - createFixedDeposit  ΓåÆ lock XLM for a fixed term at guaranteed APY
  *
  * All Soroban contract calls go through escrow_contract.js / pool_contract.js.
  * All Horizon payments go through the signAndSubmit helper.
@@ -49,7 +49,7 @@ const NETWORK_PASSPHRASE =
 
 const server = new Horizon.Server(HORIZON_URL);
 
-// ── Custody addresses — set in .env ──────────────────────────────────────────
+// ΓöÇΓöÇ Custody addresses ΓÇö set in .env ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // VITE_ESCROW_ADDRESS  = your "escrow" Stellar account public key
 // VITE_POOL_ADDRESS    = your "liquidity" Stellar account public key
 const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_ADDRESS;
@@ -58,10 +58,8 @@ const POOL_ADDRESS   = import.meta.env.VITE_POOL_ADDRESS;
 const isPublic = import.meta.env.VITE_STELLAR_NETWORK === 'PUBLIC';
 const WC_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
 
-let wcModules = [];
-try {
-  if (WC_PROJECT_ID) {
-    wcModules = [new WalletConnectModule({
+const wcModules = WC_PROJECT_ID
+  ? [new WalletConnectModule({
       projectId: WC_PROJECT_ID,
       metadata: {
         name: 'Orchid',
@@ -72,23 +70,18 @@ try {
       allowedChains: [
         isPublic ? WalletConnectTargetChain.PUBLIC : WalletConnectTargetChain.TESTNET,
       ],
-    })];
-  }
-} catch (_) {
-  wcModules = [];
-}
+    })]
+  : [];
 
 // Guard against double-init (React StrictMode renders twice in dev)
-try {
-  if (!StellarWalletsKit.isInitialized?.()) {
-    StellarWalletsKit.init({
-      network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
-      modules: [...defaultModules(), ...wcModules],
-    });
-  }
-} catch (_) { /* silent — prevents crash if already initialized */ }
+if (!StellarWalletsKit.isInitialized?.()) {
+  StellarWalletsKit.init({
+    network: isPublic ? Networks.PUBLIC : Networks.TESTNET,
+    modules: [...defaultModules(), ...wcModules],
+  });
+}
 
-// ─── Helper: extract a human-readable message from a Horizon error ───────────
+// ΓöÇΓöÇΓöÇ Helper: extract a human-readable message from a Horizon error ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Horizon wraps the real failure reason inside extras.result_codes.
 // This unwraps it so the UI shows "op_no_destination" instead of a raw 400.
 function horizonError(err) {
@@ -109,7 +102,7 @@ function horizonError(err) {
   return err?.message || 'Unknown error';
 }
 
-// ─── Helper: sign + submit a built transaction ───────────────────────────────
+// ΓöÇΓöÇΓöÇ Helper: sign + submit a built transaction ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Takes a fully built Stellar transaction, asks the wallet to sign it,
 // then submits it to Horizon. Returns the Horizon response on success.
 async function signAndSubmit(tx, signerAddress) {
@@ -135,7 +128,7 @@ async function signAndSubmit(tx, signerAddress) {
   }
 }
 
-// ─── Helper: sign + submit + record in analytics ─────────────────────────────
+// ΓöÇΓöÇΓöÇ Helper: sign + submit + record in analytics ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Wraps signAndSubmit with analytics tracking.
 // On success: records the tx hash and marks it confirmed.
 // On failure: marks the tx as failed in analytics.
@@ -167,14 +160,14 @@ async function signSubmitRecord(tx, { amount, sourceAccount, type }) {
   }
 }
 
-// ─── Helper: generate a short display ID ─────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Helper: generate a short display ID ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Creates a human-readable local ID like "TX-M5X2K" for UI display.
-// Not the on-chain hash — just a local reference for the transaction list.
+// Not the on-chain hash ΓÇö just a local reference for the transaction list.
 function shortId() {
   return `TX-${Date.now().toString(36).toUpperCase()}`;
 }
 
-// ─── Helper: format amount safely for Stellar (max 7 decimal places) ─────────
+// ΓöÇΓöÇΓöÇ Helper: format amount safely for Stellar (max 7 decimal places) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Stellar requires amounts to have at most 7 decimal places (stroop precision).
 // Throws if the amount is invalid or zero.
 function stellarAmount(value) {
@@ -183,7 +176,7 @@ function stellarAmount(value) {
   return n.toFixed(7);
 }
 
-// ─── Helper: build tx with auto-retry on tx_bad_seq ──────────────────────────
+// ΓöÇΓöÇΓöÇ Helper: build tx with auto-retry on tx_bad_seq ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // tx_bad_seq happens when the account sequence number is stale (e.g. two tabs open).
 // This retries once by re-fetching the account before giving up.
 async function buildAndSign(address, buildFn, meta = {}) {
@@ -205,7 +198,7 @@ async function buildAndSign(address, buildFn, meta = {}) {
   throw lastErr || new Error('Transaction failed after retries');
 }
 
-// ── BigInt-safe JSON serializer for Zustand persist ──────────────────────────
+// ΓöÇΓöÇ BigInt-safe JSON serializer for Zustand persist ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Soroban contract calls can return BigInt values. JSON.stringify doesn't handle
 // BigInt natively, so we convert them to strings before saving to localStorage.
 const bigIntSerializer = {
@@ -218,7 +211,7 @@ const bigIntSerializer = {
 export const useWalletStore = create(
   persist(
     (set, get) => ({
-      // ── State ──────────────────────────────────────────────────────────────
+      // ΓöÇΓöÇ State ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
       address: null,
       balance: '0',
       balances: [],
@@ -227,9 +220,9 @@ export const useWalletStore = create(
       transactions: [],
       savedRouteTemplates: [],
 
-      // ── Wallet ─────────────────────────────────────────────────────────────
+      // ΓöÇΓöÇ Wallet ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
       /**
-       * connect — opens the wallet selection modal (Freighter, WalletConnect, etc.)
+       * connect ΓÇö opens the wallet selection modal (Freighter, WalletConnect, etc.)
        * On success: saves the address, fetches balance, registers the wallet in
        * analytics + backend DB, and indexes on-chain tx history from Horizon.
        */
@@ -274,9 +267,9 @@ export const useWalletStore = create(
         localStorage.removeItem('wallet-store-v3');
       },
 
-      // ── Balance ────────────────────────────────────────────────────────────
+      // ΓöÇΓöÇ Balance ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
       /**
-       * fetchBalance — loads the current XLM balance and all token balances
+       * fetchBalance ΓÇö loads the current XLM balance and all token balances
        * for the connected wallet from Horizon. Updates state with the result.
        */
       fetchBalance: async () => {
@@ -285,7 +278,7 @@ export const useWalletStore = create(
         try {
           const account = await server.loadAccount(address);
           const native = account.balances.find((b) => b.asset_type === 'native');
-          // Store only plain serializable balance data — no SDK objects
+          // Store only plain serializable balance data ΓÇö no SDK objects
           const safeBalances = account.balances.map(b => ({
             asset_type: b.asset_type,
             asset_code: b.asset_code,
@@ -301,7 +294,7 @@ export const useWalletStore = create(
 
       clearTransactions: () => set({ transactions: [] }),
 
-      // ── Sanitize persisted transactions (removes malformed entries from old versions) ──
+      // ΓöÇΓöÇ Sanitize persisted transactions (removes malformed entries from old versions) ΓöÇΓöÇ
       sanitizeTransactions: () => {
         set((s) => ({
           transactions: (s.transactions || []).filter(
@@ -315,9 +308,9 @@ export const useWalletStore = create(
         }));
       },
 
-      // ── Send (Dashboard quick transfer) ────────────────────────────────────
+      // ΓöÇΓöÇ Send (Dashboard quick transfer) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
       /**
-       * sendTransaction — sends XLM directly to another Stellar address.
+       * sendTransaction ΓÇö sends XLM directly to another Stellar address.
        * Validates the destination exists on-chain before building the tx.
        * Used for the quick transfer widget on the Dashboard.
        */
@@ -354,9 +347,9 @@ export const useWalletStore = create(
         return res;
       },
 
-      // ── Payment Router (split payment) ─────────────────────────────────────
+      // ΓöÇΓöÇ Payment Router (split payment) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
       /**
-       * routePayment — splits a total amount across multiple recipients in one tx.
+       * routePayment ΓÇö splits a total amount across multiple recipients in one tx.
        * Each split specifies an address and a percentage of the total.
        * All payments are bundled into a single Stellar transaction (atomic).
        */
@@ -391,9 +384,9 @@ export const useWalletStore = create(
         return res.hash;
       },
 
-      // ── Bulk Payout ────────────────────────────────────────────────────────
+      // ΓöÇΓöÇ Bulk Payout ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
       /**
-       * batchPayment — sends different amounts to multiple recipients in one tx.
+       * batchPayment ΓÇö sends different amounts to multiple recipients in one tx.
        * Unlike routePayment (percentage splits), each recipient gets a fixed amount.
        * Used for payroll, bulk disbursements, etc.
        */
@@ -430,7 +423,7 @@ export const useWalletStore = create(
         return res.hash;
       },
 
-      // ── Route Template helpers ─────────────────────────────────────────────
+      // ΓöÇΓöÇ Route Template helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
       saveRouteTemplate: (name, splits) => {
         set((s) => ({
           savedRouteTemplates: [
@@ -444,12 +437,12 @@ export const useWalletStore = create(
         set((s) => ({ savedRouteTemplates: s.savedRouteTemplates.filter((t) => t.name !== name) }));
       },
 
-      // ── Escrow — Soroban Contract ──────────────────────────────────────────
+      // ΓöÇΓöÇ Escrow ΓÇö Soroban Contract ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
       // All escrow operations go directly to the deployed Soroban contract.
-      // No custody wallet — the contract holds and enforces all rules trustlessly.
+      // No custody wallet ΓÇö the contract holds and enforces all rules trustlessly.
 
       /**
-       * createEscrow — locks buyer's funds in the Soroban escrow contract.
+       * createEscrow ΓÇö locks buyer's funds in the Soroban escrow contract.
        * @param seller        - seller's Stellar address
        * @param amount        - XLM amount to lock
        * @param expiryDays    - days until the escrow auto-expires
@@ -517,8 +510,8 @@ export const useWalletStore = create(
         const escrow = transactions.find(t => t.id === id);
         if (!escrow) throw new Error('Escrow not found');
 
-        // If disputed → buyer cancels via contract cancel
-        // If funded → buyer cancels before deadline
+        // If disputed ΓåÆ buyer cancels via contract cancel
+        // If funded ΓåÆ buyer cancels before deadline
         const { contractCancel } = await import('./escrow_contract.js');
         const result = await contractCancel(address, escrow.escrow_id);
 
@@ -531,7 +524,7 @@ export const useWalletStore = create(
         return result.hash;
       },
 
-      // Seller requests refund (dispute flow) — calls contract dispute
+      // Seller requests refund (dispute flow) ΓÇö calls contract dispute
       requestEscrowRefund: async (id) => {
         const { transactions, address } = get();
         const escrow = transactions.find(t => t.id === id);
@@ -565,7 +558,7 @@ export const useWalletStore = create(
         return result.hash;
       },
 
-      // Mark Delivered — seller signals delivery (calls contract)
+      // Mark Delivered ΓÇö seller signals delivery (calls contract)
       markDelivered: async (id) => {
         const { transactions, address } = get();
         const escrow = transactions.find(t => t.id === id);
@@ -588,7 +581,7 @@ export const useWalletStore = create(
         try {
           const { contractDispute } = await import('./escrow_contract.js');
           await contractDispute(address, escrow.escrow_id);
-        } catch (_) { /* escrow may not have arbitrator — still update local state */ }
+        } catch (_) { /* escrow may not have arbitrator ΓÇö still update local state */ }
         set((s) => ({
           transactions: s.transactions.map((t) =>
             t.id === id ? { ...t, status: 'Disputed' } : t
@@ -607,12 +600,12 @@ export const useWalletStore = create(
         }));
       },
 
-      // ── Lending — Soroban Pool Contract ───────────────────────────────────
+      // ΓöÇΓöÇ Lending ΓÇö Soroban Pool Contract ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
       // All lending operations go directly to the deployed Soroban pool contract.
-      // No custody wallet — the contract holds and enforces all rules trustlessly.
+      // No custody wallet ΓÇö the contract holds and enforces all rules trustlessly.
 
       /**
-       * supplyLendingPool — deposit XLM into the pool to earn supply APY.
+       * supplyLendingPool ΓÇö deposit XLM into the pool to earn supply APY.
        * Calls the pool contract's deposit function, then records locally.
        */
       supplyLendingPool: async (amount, asset) => {
