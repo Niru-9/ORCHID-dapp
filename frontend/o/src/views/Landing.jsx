@@ -1,3 +1,8 @@
+
+
+
+
+
 /**
  * Landing — the public-facing home page shown before wallet connection.
  * Contains: hero section, live network stats bar, problem/solution copy,
