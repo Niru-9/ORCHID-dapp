@@ -44,10 +44,11 @@ backend/build/
 backend/.env
 
 # =========================
-# CONTRACTS (Rust / Soroban)
+# CONTRACTS (Rust / Soroban) — kept private
 # =========================
 
-contracts/**/target/
+frontend/o/contracts/
+contracts/
 
 # =========================
 # CACHE / TEST
